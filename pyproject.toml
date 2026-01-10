@@ -9,7 +9,10 @@ dependencies = [
     "google-genai>=0.2.0",
     "langchain>=1.2.3",
     "langchain-community>=0.2.0",
+    "llama-cpp-python>=0.3.16",
+    "nltk>=3.9.2",
     "qdrant-client>=1.16.2",
+    "rank-bm25>=0.2.2",
     "uvicorn[standard]>=0.40.0",
 ]
 

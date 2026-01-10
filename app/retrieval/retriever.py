@@ -1,0 +1,281 @@
+"""
+Vector-based document retriever using embeddings and Qdrant.
+Implements retrieval with LangChain compatibility.
+"""
+
+from typing import List, Optional, Dict, Any, Union
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.documents import Document as LangChainDocument
+from langchain_core.callbacks import CallbackManagerForRetrieverRun
+
+from app.core.config import settings
+from app.core.logging import get_logger
+from app.db.qdrant_client import QdrantDB, qdrant_db
+from app.db.models import SearchResult
+from app.embeddings import get_embedder, Embedder
+
+logger = get_logger(__name__)
+
+
+class VectorRetriever:
+    """Vector-based document retriever using embeddings and Qdrant."""
+    
+    def __init__(
+        self,
+        qdrant_client: Optional[QdrantDB] = None,
+        embedder: Optional[Embedder] = None,
+        collection_name: Optional[str] = None,
+        k: int = 10,
+        score_threshold: Optional[float] = None
+    ):
+        """
+        Initialize the vector retriever.
+        
+        Args:
+            qdrant_client: QdrantDB client instance (defaults to global qdrant_db)
+            embedder: Embedder instance (defaults to get_embedder())
+            collection_name: Collection name to search in
+            k: Number of documents to retrieve (default: 10)
+            score_threshold: Minimum similarity score threshold (optional)
+        """
+        self.qdrant = qdrant_client or qdrant_db
+        self.embedder = embedder or get_embedder()
+        self.collection_name = collection_name or settings.QDRANT_COLLECTION_NAME
+        self.k = k
+        self.score_threshold = score_threshold
+        
+        logger.info(f"VectorRetriever initialized with k={k}, collection={self.collection_name}")
+    
+    def retrieve(
+        self,
+        query: str,
+        k: Optional[int] = None,
+        score_threshold: Optional[float] = None,
+        filter: Optional[Dict[str, Any]] = None
+    ) -> List[SearchResult]:
+        """
+        Retrieve relevant documents for a query.
+        
+        Args:
+            query: Query text string
+            k: Number of documents to retrieve (overrides instance default)
+            score_threshold: Minimum similarity score (overrides instance default)
+            filter: Optional Qdrant filter for metadata filtering
+        
+        Returns:
+            List of SearchResult objects
+        """
+        k = k if k is not None else self.k
+        score_threshold = score_threshold if score_threshold is not None else self.score_threshold
+        
+        try:
+            logger.debug(f"Retrieving documents for query: {query[:50]}...")
+            
+            query_embedding = self.embedder.embed_query(query)
+            
+            if not query_embedding:
+                logger.warning("Failed to generate query embedding")
+                return []
+            
+            qdrant_filter = None
+            if filter:
+                try:
+                    from qdrant_client.models import Filter, FieldCondition, MatchValue
+                    
+                    conditions = []
+                    for key, value in filter.items():
+                        conditions.append(
+                            FieldCondition(key=key, match=MatchValue(value=value))
+                        )
+                    if conditions:
+                        qdrant_filter = Filter(must=conditions)
+                except ImportError:
+                    logger.warning("Could not import Qdrant filter models, skipping filter")
+            
+            results = self.qdrant.search(
+                query_vector=query_embedding,
+                limit=k,
+                collection_name=self.collection_name,
+                score_threshold=score_threshold,
+                filter=qdrant_filter
+            )
+            
+            search_results = [
+                SearchResult.from_qdrant_result(result) for result in results
+            ]
+            
+            logger.debug(f"Retrieved {len(search_results)} documents")
+            return search_results
+        except Exception as e:
+            logger.error(f"Retrieval failed: {e}")
+            raise
+    
+    def retrieve_as_strings(
+        self,
+        query: str,
+        k: Optional[int] = None,
+        score_threshold: Optional[float] = None,
+        filter: Optional[Dict[str, Any]] = None
+    ) -> List[str]:
+        """
+        Retrieve documents and return only text content.
+        
+        Args:
+            query: Query text string
+            k: Number of documents to retrieve
+            score_threshold: Minimum similarity score
+            filter: Optional metadata filter
+        
+        Returns:
+            List of document text strings
+        """
+        results = self.retrieve(query, k=k, score_threshold=score_threshold, filter=filter)
+        return [result.text for result in results]
+    
+    def retrieve_with_metadata(
+        self,
+        query: str,
+        k: Optional[int] = None,
+        score_threshold: Optional[float] = None,
+        filter: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve documents with full metadata.
+        
+        Args:
+            query: Query text string
+            k: Number of documents to retrieve
+            score_threshold: Minimum similarity score
+            filter: Optional metadata filter
+        
+        Returns:
+            List of dictionaries with id, text, score, and metadata
+        """
+        results = self.retrieve(query, k=k, score_threshold=score_threshold, filter=filter)
+        return [
+            {
+                "id": result.id,
+                "text": result.text,
+                "score": result.score,
+                "metadata": result.metadata
+            }
+            for result in results
+        ]
+
+
+class LangChainVectorRetriever(BaseRetriever):
+    """LangChain-compatible retriever wrapper for vector search."""
+    
+    def __init__(
+        self,
+        vector_retriever: VectorRetriever,
+        **kwargs
+    ):
+        """
+        Initialize LangChain retriever.
+        
+        Args:
+            vector_retriever: VectorRetriever instance to wrap
+            **kwargs: Additional arguments for BaseRetriever
+        """
+        super().__init__(**kwargs)
+        self.vector_retriever = vector_retriever
+    
+    def _get_relevant_documents(
+        self,
+        query: str,
+        *,
+        run_manager: CallbackManagerForRetrieverRun,
+        k: Optional[int] = None,
+        score_threshold: Optional[float] = None,
+        filter: Optional[Dict[str, Any]] = None
+    ) -> List[LangChainDocument]:
+        """
+        Get relevant documents for a query (LangChain interface).
+        
+        Args:
+            query: Query string
+            run_manager: Callback manager
+            k: Number of documents to retrieve
+            score_threshold: Minimum similarity score
+            filter: Optional metadata filter
+        
+        Returns:
+            List of LangChain Document objects
+        """
+        results = self.vector_retriever.retrieve(
+            query=query,
+            k=k,
+            score_threshold=score_threshold,
+            filter=filter
+        )
+        
+        return [
+            LangChainDocument(
+                page_content=result.text,
+                metadata={
+                    "id": result.id,
+                    "score": result.score,
+                    **result.metadata
+                }
+            )
+            for result in results
+        ]
+    
+    async def _aget_relevant_documents(
+        self,
+        query: str,
+        *,
+        run_manager: CallbackManagerForRetrieverRun,
+        k: Optional[int] = None,
+        score_threshold: Optional[float] = None,
+        filter: Optional[Dict[str, Any]] = None
+    ) -> List[LangChainDocument]:
+        """Async version of _get_relevant_documents."""
+        import asyncio
+        return await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self._get_relevant_documents(
+                query,
+                run_manager=run_manager,
+                k=k,
+                score_threshold=score_threshold,
+                filter=filter
+            )
+        )
+
+
+def get_retriever(
+    qdrant_client: Optional[QdrantDB] = None,
+    embedder: Optional[Embedder] = None,
+    collection_name: Optional[str] = None,
+    k: int = 10,
+    score_threshold: Optional[float] = None,
+    langchain_compatible: bool = False
+) -> Union[VectorRetriever, LangChainVectorRetriever]:
+    """
+    Get a retriever instance.
+    
+    Args:
+        qdrant_client: Optional QdrantDB client
+        embedder: Optional Embedder instance
+        collection_name: Optional collection name
+        k: Number of documents to retrieve
+        score_threshold: Optional minimum similarity score
+        langchain_compatible: If True, returns LangChain-compatible retriever
+    
+    Returns:
+        VectorRetriever or LangChainVectorRetriever instance
+    """
+    vector_retriever = VectorRetriever(
+        qdrant_client=qdrant_client,
+        embedder=embedder,
+        collection_name=collection_name,
+        k=k,
+        score_threshold=score_threshold
+    )
+    
+    if langchain_compatible:
+        return LangChainVectorRetriever(vector_retriever)
+    return vector_retriever
+
