@@ -31,11 +31,20 @@ class Settings:
     QDRANT_URL: Optional[str] = os.getenv("QDRANT_URL", None)
     QDRANT_LOCAL_PATH: Optional[str] = os.getenv("QDRANT_LOCAL_PATH", None)
     
-    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-    EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "384"))
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "models/embedding-001")
+    EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "768"))
+    GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY", None)
+    
+    LLM_MODEL_PATH: Optional[str] = os.getenv("LLM_MODEL_PATH", None)
+    LLM_N_CTX: int = int(os.getenv("LLM_N_CTX", "2048"))
+    LLM_N_THREADS: Optional[int] = int(os.getenv("LLM_N_THREADS")) if os.getenv("LLM_N_THREADS") else None
+    LLM_N_GPU_LAYERS: int = int(os.getenv("LLM_N_GPU_LAYERS", "0"))
+    LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
+    LLM_TOP_P: float = float(os.getenv("LLM_TOP_P", "0.9"))
+    LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "512"))
+    LLM_VERBOSE: bool = os.getenv("LLM_VERBOSE", "False").lower() == "true"
     
     LLM_API_KEY: Optional[str] = os.getenv("LLM_API_KEY", None)
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
     LLM_BASE_URL: Optional[str] = os.getenv("LLM_BASE_URL", None)
 
 
