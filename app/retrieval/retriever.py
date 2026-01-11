@@ -10,7 +10,7 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.db.qdrant_client import QdrantDB, qdrant_db
+from app.db.qdrant_client import QdrantDB, get_qdrant_db
 from app.db.models import SearchResult
 from app.embeddings import get_embedder, Embedder
 
@@ -38,7 +38,7 @@ class VectorRetriever:
             k: Number of documents to retrieve (default: 10)
             score_threshold: Minimum similarity score threshold (optional)
         """
-        self.qdrant = qdrant_client or qdrant_db
+        self.qdrant = qdrant_client or get_qdrant_db()
         self.embedder = embedder or get_embedder()
         self.collection_name = collection_name or settings.QDRANT_COLLECTION_NAME
         self.k = k

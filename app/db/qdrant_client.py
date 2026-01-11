@@ -386,4 +386,4 @@ def get_qdrant_db() -> QdrantDB:
         _qdrant_db_instance = QdrantDB()
     return _qdrant_db_instance
 
-qdrant_db = get_qdrant_db() 
+# qdrant_db = get_qdrant_db() 

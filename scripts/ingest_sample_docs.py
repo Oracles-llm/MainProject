@@ -73,64 +73,62 @@ def ingest_documents():
         logger.info("Initializing embedder...")
         embedder = get_embedder()
         
-        # Initialize Qdrant with local path
+        # Initialize Qdrant with local path using context manager
         logger.info("Initializing Qdrant...")
         local_path = "./data/qdrant"
-        qdrant = QdrantDB(
-            mode="local",
-            local_path=local_path
-        )
         
-        # Ensure collection exists
-        collection_name = settings.QDRANT_COLLECTION_NAME
-        logger.info(f"Ensuring collection '{collection_name}' exists...")
-        qdrant.ensure_collection(
-            collection_name=collection_name,
-            vector_size=settings.EMBEDDING_DIMENSION
-        )
-        
-        # Get sample documents
-        sample_docs = get_sample_documents()
-        logger.info(f"Processing {len(sample_docs)} documents...")
-        
-        # Prepare documents for embedding
-        doc_texts = [doc["text"] for doc in sample_docs]
-        
-        # Generate embeddings
-        logger.info("Generating embeddings...")
-        embedding_result = embedder.embed_documents(doc_texts)
-        
-        if len(embedding_result.embeddings) != len(sample_docs):
-            raise ValueError(f"Mismatch: {len(embedding_result.embeddings)} embeddings for {len(sample_docs)} documents")
-        
-        # Create vector points
-        points = []
-        for i, (doc_data, embedding) in enumerate(zip(sample_docs, embedding_result.embeddings)):
-            doc_id = str(uuid.uuid4())
-            
-            payload = {
-                "text": doc_data["text"],
-                "source": doc_data["source"],
-                "chunk_index": i,
-                "created_at": datetime.now().isoformat(),
-                **doc_data["metadata"]
-            }
-            
-            point = VectorPoint(
-                id=doc_id,
-                vector=embedding,
-                payload=payload
+        with QdrantDB(mode="local", local_path=local_path) as qdrant:
+            # Ensure collection exists
+            collection_name = settings.QDRANT_COLLECTION_NAME
+            logger.info(f"Ensuring collection '{collection_name}' exists...")
+            qdrant.ensure_collection(
+                collection_name=collection_name,
+                vector_size=settings.EMBEDDING_DIMENSION
             )
-            points.append(point.to_point_struct())
+            
+            # Get sample documents
+            sample_docs = get_sample_documents()
+            logger.info(f"Processing {len(sample_docs)} documents...")
+            
+            # Prepare documents for embedding
+            doc_texts = [doc["text"] for doc in sample_docs]
+            
+            # Generate embeddings
+            logger.info("Generating embeddings...")
+            embedding_result = embedder.embed_documents(doc_texts)
+            
+            if len(embedding_result.embeddings) != len(sample_docs):
+                raise ValueError(f"Mismatch: {len(embedding_result.embeddings)} embeddings for {len(sample_docs)} documents")
+            
+            # Create vector points
+            points = []
+            for i, (doc_data, embedding) in enumerate(zip(sample_docs, embedding_result.embeddings)):
+                doc_id = str(uuid.uuid4())
+                
+                payload = {
+                    "text": doc_data["text"],
+                    "source": doc_data["source"],
+                    "chunk_index": i,
+                    "created_at": datetime.now().isoformat(),
+                    **doc_data["metadata"]
+                }
+                
+                point = VectorPoint(
+                    id=doc_id,
+                    vector=embedding,
+                    payload=payload
+                )
+                points.append(point.to_point_struct())
+            
+            # Upsert points
+            logger.info(f"Inserting {len(points)} documents into Qdrant...")
+            qdrant.upsert_points(points, collection_name=collection_name)
+            
+            logger.info(f"Successfully ingested {len(points)} documents into Qdrant!")
+            logger.info(f"Collection: {collection_name}")
+            logger.info(f"Storage path: {qdrant.local_path}")
         
-        # Upsert points
-        logger.info(f"Inserting {len(points)} documents into Qdrant...")
-        qdrant.upsert_points(points, collection_name=collection_name)
-        
-        logger.info(f"Successfully ingested {len(points)} documents into Qdrant!")
-        logger.info(f"Collection: {collection_name}")
-        logger.info(f"Storage path: {qdrant.local_path}")
-        
+        logger.info("Qdrant connection closed successfully")
         return True
         
     except Exception as e:
