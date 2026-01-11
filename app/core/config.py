@@ -43,6 +43,8 @@ class Settings:
     LLM_TOP_P: float = float(os.getenv("LLM_TOP_P", "0.9"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "512"))
     LLM_VERBOSE: bool = os.getenv("LLM_VERBOSE", "False").lower() == "true"
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "llama_cpp")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-1.5-flash")
     
     LLM_API_KEY: Optional[str] = os.getenv("LLM_API_KEY", None)
     LLM_BASE_URL: Optional[str] = os.getenv("LLM_BASE_URL", None)

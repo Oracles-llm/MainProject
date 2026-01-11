@@ -1,8 +1,8 @@
 """
-LLM client for text generation using LangChain with llama.cpp backend.
+LLM client for text generation with multi-provider support.
 """
 
-from app.llm.client import LLMClient, get_llm_client
+from app.llm.client import LLMClient, get_llm_client, LLMProvider
 from app.llm.prompts import (
     get_system_prompt,
     create_rag_prompt_template,
@@ -18,6 +18,7 @@ from app.llm.prompts import (
 __all__ = [
     "LLMClient",
     "get_llm_client",
+    "LLMProvider",
     "get_system_prompt",
     "create_rag_prompt_template",
     "create_chat_prompt_template",
@@ -28,4 +29,3 @@ __all__ = [
     "build_rag_prompt_string",
     "build_chat_prompt_string"
 ]
-
