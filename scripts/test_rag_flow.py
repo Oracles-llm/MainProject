@@ -215,6 +215,8 @@ if __name__ == "__main__":
             arg = sys.argv[i]
             if arg == "--rerank":
                 use_reranking = True
+                if rerank_strategy == RerankStrategy.NONE:
+                    rerank_strategy = RerankStrategy.BM25
             elif arg == "--rerank-strategy" and i + 1 < len(sys.argv):
                 strategy_str = sys.argv[i + 1].lower()
                 if strategy_str == "bm25":

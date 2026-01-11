@@ -56,8 +56,7 @@ class Embedder:
         self.default_task_type = default_task_type
         self.default_output_dimensionality = default_output_dimensionality
         
-        genai.configure(api_key=self.api_key)
-        self.client = genai.Client()
+        self.client = genai.Client(api_key=self.api_key)
         
         logger.info(f"Embedder initialized with model: {model}")
     

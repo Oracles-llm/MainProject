@@ -109,6 +109,11 @@ class BM25Reranker(BaseReranker):
             except LookupError:
                 nltk.download('punkt', quiet=True)
             
+            try:
+                nltk.data.find('tokenizers/punkt_tab')
+            except LookupError:
+                nltk.download('punkt_tab', quiet=True)
+            
             tokenized_corpus = [word_tokenize(doc.lower()) for doc in self.corpus]
             self._bm25 = BM25Okapi(tokenized_corpus)
             logger.info(f"BM25 re-ranker initialized with {len(self.corpus)} documents")
@@ -149,6 +154,9 @@ class BM25Reranker(BaseReranker):
             
             tokenized_query = word_tokenize(query.lower())
             scores = self._bm25.get_scores(tokenized_query)
+            
+            if not isinstance(scores, (list, tuple)):
+                scores = list(scores)
             
             reranked = []
             for result, score in zip(results, scores):

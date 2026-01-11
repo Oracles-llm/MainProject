@@ -229,20 +229,20 @@ class QdrantDB:
         collection_name = collection_name or self.collection_name
         
         try:
-            results = self._client.search(
+            response = self._client.query_points(
                 collection_name=collection_name,
-                query_vector=query_vector,
+                query=query_vector,
                 limit=limit,
                 score_threshold=score_threshold,
                 query_filter=filter
             )
             
             search_results = []
-            for result in results:
+            for point in response.points:
                 search_results.append({
-                    "id": result.id,
-                    "score": result.score,
-                    "payload": result.payload
+                    "id": str(point.id),
+                    "score": point.score if hasattr(point, 'score') else 0.0,
+                    "payload": point.payload if hasattr(point, 'payload') else {}
                 })
             
             logger.debug(f"Found {len(search_results)} results")
@@ -358,7 +358,32 @@ class QdrantDB:
             self.create_collection(collection_name, vector_size, distance)
         else:
             logger.debug(f"Collection '{collection_name}' already exists")
+    
+    def close(self):
+        """Close the Qdrant client connection."""
+        if self._client:
+            try:
+                self._client.close()
+                logger.debug("Qdrant client connection closed")
+            except Exception as e:
+                logger.warning(f"Error closing Qdrant client: {e}")
+    
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.close()
 
 
-qdrant_db = QdrantDB()
+_qdrant_db_instance = None
 
+def get_qdrant_db() -> QdrantDB:
+    """Get or create the global QdrantDB instance (lazy initialization)."""
+    global _qdrant_db_instance
+    if _qdrant_db_instance is None:
+        _qdrant_db_instance = QdrantDB()
+    return _qdrant_db_instance
+
+qdrant_db = get_qdrant_db() 
