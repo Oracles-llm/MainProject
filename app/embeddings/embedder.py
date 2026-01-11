@@ -1,12 +1,20 @@
 """
 Embedding service for generating text embeddings.
 Currently uses Gemini Embedding API, designed to be easily switchable to self-hosted models.
+Includes LangChain compatibility.
 """
 
 from typing import List, Optional, Union
 import os
 from google import genai
 from google.genai import types
+
+try:
+    from langchain_core.embeddings import Embeddings as LangChainEmbeddings
+    LANGCHAIN_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_AVAILABLE = False
+    LangChainEmbeddings = object
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -195,6 +203,96 @@ class Embedder:
         )
 
 
+class LangChainGeminiEmbeddings(LangChainEmbeddings):
+    """LangChain-compatible embedding wrapper for Gemini embeddings."""
+    
+    def __init__(
+        self,
+        embedder: Optional[Embedder] = None,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        task_type_for_documents: EmbeddingTaskType = EmbeddingTaskType.RETRIEVAL_DOCUMENT,
+        task_type_for_queries: EmbeddingTaskType = EmbeddingTaskType.RETRIEVAL_QUERY
+    ):
+        """
+        Initialize LangChain-compatible embeddings.
+        
+        Args:
+            embedder: Optional Embedder instance (creates new one if not provided)
+            model: Model name (used if creating new embedder)
+            api_key: API key (used if creating new embedder)
+            task_type_for_documents: Task type for document embeddings
+            task_type_for_queries: Task type for query embeddings
+        """
+        if not LANGCHAIN_AVAILABLE:
+            raise ImportError(
+                "LangChain is not installed. Install with: pip install langchain-core"
+            )
+        
+        super().__init__()
+        self._embedder = embedder or Embedder(
+            api_key=api_key or settings.GEMINI_API_KEY,
+            model=model or settings.EMBEDDING_MODEL
+        )
+        self.task_type_for_documents = task_type_for_documents
+        self.task_type_for_queries = task_type_for_queries
+        
+        logger.info("LangChainGeminiEmbeddings initialized")
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """
+        Embed search documents (LangChain interface).
+        
+        Args:
+            texts: List of text strings to embed
+        
+        Returns:
+            List of embedding vectors
+        """
+        if not texts:
+            return []
+        
+        result = self._embedder.embed(
+            texts=texts,
+            task_type=self.task_type_for_documents
+        )
+        return result.embeddings
+    
+    def embed_query(self, text: str) -> List[float]:
+        """
+        Embed a single query text (LangChain interface).
+        
+        Args:
+            text: Query text string
+        
+        Returns:
+            Embedding vector
+        """
+        result = self._embedder.embed(
+            texts=text,
+            task_type=self.task_type_for_queries
+        )
+        return result.embeddings[0] if result.embeddings else []
+    
+    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Async version of embed_documents."""
+        import asyncio
+        return await asyncio.get_event_loop().run_in_executor(
+            None,
+            self.embed_documents,
+            texts
+        )
+    
+    async def aembed_query(self, text: str) -> List[float]:
+        """Async version of embed_query."""
+        import asyncio
+        return await asyncio.get_event_loop().run_in_executor(
+            None,
+            self.embed_query,
+            text
+        )
+
+
 def get_embedder() -> Embedder:
     """
     Get a default embedder instance using settings.
@@ -205,5 +303,28 @@ def get_embedder() -> Embedder:
     return Embedder(
         api_key=settings.GEMINI_API_KEY,
         model=settings.EMBEDDING_MODEL
+    )
+
+
+def get_langchain_embeddings(
+    embedder: Optional[Embedder] = None,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None
+) -> LangChainGeminiEmbeddings:
+    """
+    Get a LangChain-compatible embeddings instance.
+    
+    Args:
+        embedder: Optional Embedder instance
+        model: Optional model name
+        api_key: Optional API key
+    
+    Returns:
+        LangChainGeminiEmbeddings instance
+    """
+    return LangChainGeminiEmbeddings(
+        embedder=embedder,
+        model=model,
+        api_key=api_key
     )
 
