@@ -139,6 +139,8 @@ class RAGService:
                 score_threshold=score_threshold,
                 filter=filter
             )
+
+            logger.debug(f"Retrieved documents: {retrieved_docs}")
             
             if not retrieved_docs:
                 logger.warning(f"No documents retrieved for query: {query}")
