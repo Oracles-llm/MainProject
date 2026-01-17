@@ -72,7 +72,7 @@ class RAGService:
         retriever: Optional[VectorRetriever] = None,
         llm_client: Optional[LLMClient] = None,
         default_k: int = 10,
-        default_rerank_top_k: int = 5,
+        default_rerank_top_k: Optional[int] = None,
         default_use_reranking: bool = False,
         default_rerank_strategy: RerankStrategy = RerankStrategy.NONE
     ):
@@ -83,18 +83,20 @@ class RAGService:
             retriever: VectorRetriever instance (creates new if not provided)
             llm_client: LLMClient instance (creates new if not provided)
             default_k: Default number of documents to retrieve
-            default_rerank_top_k: Default number of top documents after reranking
+            default_rerank_top_k: Default number of top documents after reranking (defaults to RERANKER_TOP_K from env)
             default_use_reranking: Whether to use reranking by default
             default_rerank_strategy: Default reranking strategy
         """
+        from app.core.config import settings
+        
         self.retriever = retriever or get_retriever(k=default_k)
         self.llm_client = llm_client or get_llm_client()
         self.default_k = default_k
-        self.default_rerank_top_k = default_rerank_top_k
+        self.default_rerank_top_k = default_rerank_top_k if default_rerank_top_k is not None else settings.RERANKER_TOP_K
         self.default_use_reranking = default_use_reranking
         self.default_rerank_strategy = default_rerank_strategy
         
-        logger.info("RAGService initialized")
+        logger.info(f"RAGService initialized with default_rerank_top_k={self.default_rerank_top_k}")
     
     def query(
         self,
@@ -309,7 +311,16 @@ class RAGService:
                 system_prompt=system_prompt
             )
             
-            for token in self.llm_client.stream(prompt):
+            stop_sequences = [
+                "\n\nUser:",
+                "\nUser:",
+                "User:",
+                "\n\nAssistant:",
+                "\nAssistant:",
+                "Assistant:"
+            ]
+            
+            for token in self.llm_client.stream(prompt, stop=stop_sequences):
                 yield token
                 
         except Exception as e:
@@ -363,7 +374,8 @@ def get_rag_service(
     retriever: Optional[VectorRetriever] = None,
     llm_client: Optional[LLMClient] = None,
     default_k: int = 10,
-    default_rerank_top_k: int = 5
+    default_rerank_top_k: Optional[int] = None,
+    use_hybrid_search: bool = True
 ) -> RAGService:
     """
     Get a RAG service instance.
@@ -372,11 +384,33 @@ def get_rag_service(
         retriever: Optional VectorRetriever instance
         llm_client: Optional LLMClient instance
         default_k: Default number of documents to retrieve
-        default_rerank_top_k: Default number of top documents after reranking
+        default_rerank_top_k: Default number of top documents after reranking (defaults to RERANKER_TOP_K from env)
+        use_hybrid_search: Whether to enable hybrid search (BM25 + semantic)
     
     Returns:
         RAGService instance
     """
+    from app.core.config import settings
+    
+    if retriever is None and use_hybrid_search:
+        from app.retrieval import get_sparse_vector_generator
+        sparse_gen = get_sparse_vector_generator(model_name="Qdrant/bm25")
+        if sparse_gen:
+            from app.retrieval import get_retriever
+            retriever = get_retriever(
+                k=default_k,
+                use_hybrid_search=True,
+                sparse_vector_generator=sparse_gen
+            )
+            logger.info("RAG service initialized with hybrid search enabled")
+        else:
+            logger.warning("Sparse vector generator not available, using dense-only search")
+            from app.retrieval import get_retriever
+            retriever = get_retriever(k=default_k, use_hybrid_search=False)
+    
+    if default_rerank_top_k is None:
+        default_rerank_top_k = settings.RERANKER_TOP_K
+    
     return RAGService(
         retriever=retriever,
         llm_client=llm_client,

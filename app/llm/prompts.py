@@ -14,9 +14,15 @@ from langchain_core.prompts import (
 
 def get_system_prompt() -> str:
     """Get the default system prompt."""
-    return """You are a helpful AI assistant. Use the provided context documents to answer questions accurately and comprehensively. 
-If the context doesn't contain enough information to answer the question, say so honestly.
-Always cite the relevant parts of the context when providing answers."""
+    return """You are a helpful AI assistant. Use the provided context documents to answer the user's question accurately and concisely.
+
+IMPORTANT INSTRUCTIONS:
+- Answer ONLY the specific question asked by the user
+- Do NOT generate additional questions or answers to questions not asked
+- Do NOT create hypothetical Q&A pairs
+- Keep your response focused and direct
+- If the context doesn't contain enough information to answer the question, say so honestly
+- Stop after answering the user's question - do not continue with additional content"""
 
 
 def create_rag_prompt_template(system_prompt: Optional[str] = None) -> ChatPromptTemplate:
@@ -182,7 +188,7 @@ def build_rag_prompt_string(
         parts.append(f"Context documents:\n{context}\n")
     
     parts.append(f"User: {user_query}\n")
-    parts.append("Assistant:")
+    parts.append("Assistant: ")
     
     return "\n".join(parts)
 

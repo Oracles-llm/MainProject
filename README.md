@@ -31,3 +31,18 @@ python scripts/view_vector_db.py --collection my_collection
 
 # Use a different Qdrant path
 python scripts/view_vector_db.py --local-path ./custom/path
+
+
+===============================
+
+# Basic hybrid RAG test
+python scripts/test_hybrid_rag.py "What is Python?"
+
+# With custom parameters
+python scripts/test_hybrid_rag.py "What is RAG?" --k 5 --rerank-top-k 3
+
+# With reranking enabled
+python scripts/test_hybrid_rag.py "Explain FastAPI" --rerank
+
+# Skip comparison mode
+python scripts/test_hybrid_rag.py "What is Qdrant?" --no-compare

@@ -310,6 +310,9 @@ class QdrantDB:
                 
                 fusion_query = FusionQuery(fusion=Fusion.RRF)
                 
+                if score_threshold is not None:
+                    logger.debug(f"Hybrid search with score_threshold={score_threshold}")
+                
                 response = self._client.query_points(
                     collection_name=collection_name,
                     prefetch=prefetch_queries,
@@ -329,13 +332,20 @@ class QdrantDB:
             
             search_results = []
             for point in response.points:
+                score = point.score if hasattr(point, 'score') else 0.0
+                # Apply score threshold filtering (Qdrant may not filter RRF scores correctly)
+                if score_threshold is not None and score < score_threshold:
+                    continue
                 search_results.append({
                     "id": str(point.id),
-                    "score": point.score if hasattr(point, 'score') else 0.0,
+                    "score": score,
                     "payload": point.payload if hasattr(point, 'payload') else {}
                 })
             
-            logger.debug(f"Found {len(search_results)} results from hybrid search")
+            if score_threshold is not None:
+                logger.debug(f"Found {len(search_results)} results from hybrid search (filtered by threshold {score_threshold})")
+            else:
+                logger.debug(f"Found {len(search_results)} results from hybrid search")
             return search_results
         except Exception as e:
             logger.error(f"Hybrid search failed: {e}")

@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
             retriever=retriever,
             llm_client=llm_client,
             default_k=8,
-            default_rerank_top_k=5,
+            default_rerank_top_k=None,
             default_use_reranking=True,
             default_rerank_strategy=RerankStrategy.BM25
         )

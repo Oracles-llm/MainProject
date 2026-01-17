@@ -39,7 +39,7 @@ class VectorRetriever:
             embedder: Embedder instance (defaults to get_embedder())
             collection_name: Collection name to search in
             k: Number of documents to retrieve (default: 10)
-            score_threshold: Minimum similarity score threshold (optional)
+            score_threshold: Minimum similarity score threshold (optional, defaults to HYBRID_SEARCH_SCORE_THRESHOLD from env)
             use_hybrid_search: Whether to use hybrid search (BM25 + semantic)
             sparse_vector_generator: SparseVectorGenerator instance for BM25 (optional)
         """
@@ -47,11 +47,11 @@ class VectorRetriever:
         self.embedder = embedder or get_embedder()
         self.collection_name = collection_name or settings.QDRANT_COLLECTION_NAME
         self.k = k
-        self.score_threshold = score_threshold
+        self.score_threshold = score_threshold if score_threshold is not None else settings.HYBRID_SEARCH_SCORE_THRESHOLD
         self.use_hybrid_search = use_hybrid_search
         self.sparse_gen = sparse_vector_generator
         
-        logger.info(f"VectorRetriever initialized with k={k}, collection={self.collection_name}, hybrid_search={use_hybrid_search}")
+        logger.info(f"VectorRetriever initialized with k={k}, collection={self.collection_name}, hybrid_search={use_hybrid_search}, score_threshold={self.score_threshold}")
     
     def retrieve(
         self,
@@ -75,7 +75,9 @@ class VectorRetriever:
             List of SearchResult objects
         """
         k = k if k is not None else self.k
-        score_threshold = score_threshold if score_threshold is not None else self.score_threshold
+        # Use provided threshold, then instance default, then settings default
+        if score_threshold is None:
+            score_threshold = self.score_threshold if self.score_threshold is not None else settings.HYBRID_SEARCH_SCORE_THRESHOLD
         use_hybrid = use_hybrid_search if use_hybrid_search is not None else self.use_hybrid_search
         
         try:
@@ -103,18 +105,31 @@ class VectorRetriever:
                     logger.warning("Could not import Qdrant filter models, skipping filter")
             
             # Hybrid search: combine dense and sparse vectors
-            if use_hybrid and self.sparse_gen and self.sparse_gen.is_fitted():
+            if use_hybrid and self.sparse_gen:
                 try:
                     query_sparse = self.sparse_gen.generate_query_sparse_vector(query)
-                    results = self.qdrant.hybrid_search(
-                        query_vector=query_embedding,
-                        query_sparse_vector=query_sparse,
-                        limit=k,
-                        collection_name=self.collection_name,
-                        score_threshold=score_threshold,
-                        filter=qdrant_filter
-                    )
-                    logger.debug("Using hybrid search (BM25 + semantic)")
+                    if query_sparse:
+                        if score_threshold is not None:
+                            logger.debug(f"Using hybrid search (BM25 + semantic) with score_threshold={score_threshold}")
+                        else:
+                            logger.debug("Using hybrid search (BM25 + semantic) without score threshold")
+                        results = self.qdrant.hybrid_search(
+                            query_vector=query_embedding,
+                            query_sparse_vector=query_sparse,
+                            limit=k,
+                            collection_name=self.collection_name,
+                            score_threshold=score_threshold,
+                            filter=qdrant_filter
+                        )
+                    else:
+                        logger.warning("Failed to generate sparse vector, falling back to dense-only")
+                        results = self.qdrant.search(
+                            query_vector=query_embedding,
+                            limit=k,
+                            collection_name=self.collection_name,
+                            score_threshold=score_threshold,
+                            filter=qdrant_filter
+                        )
                 except Exception as e:
                     logger.warning(f"Hybrid search failed, falling back to dense-only: {e}")
                     results = self.qdrant.search(
