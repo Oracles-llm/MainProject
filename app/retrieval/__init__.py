@@ -14,6 +14,8 @@ from app.retrieval.reranker import (
     RerankResult,
     get_reranker
 )
+from app.retrieval.sparse_vectors import SparseVectorGenerator
+from app.retrieval.sparse_utils import get_sparse_vector_generator, load_sparse_vector_generator_from_qdrant
 
 __all__ = [
     "VectorRetriever",
@@ -23,6 +25,9 @@ __all__ = [
     "BM25Reranker",
     "NoReranker",
     "RerankResult",
-    "get_reranker"
+    "get_reranker",
+    "SparseVectorGenerator",
+    "get_sparse_vector_generator",
+    "load_sparse_vector_generator_from_qdrant"
 ]
 

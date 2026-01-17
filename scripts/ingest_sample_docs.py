@@ -16,6 +16,7 @@ from app.db.models import Document, VectorPoint
 from app.embeddings import get_embedder
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.retrieval.sparse_vectors import SparseVectorGenerator
 
 logger = get_logger(__name__)
 
@@ -78,12 +79,18 @@ def ingest_documents():
         local_path = "./data/qdrant"
         
         with QdrantDB(mode="local", local_path=local_path) as qdrant:
-            # Ensure collection exists
+            # Ensure collection exists with sparse vector support
             collection_name = settings.QDRANT_COLLECTION_NAME
             logger.info(f"Ensuring collection '{collection_name}' exists...")
+            
+            if qdrant.collection_exists(collection_name):
+                logger.info(f"Deleting existing collection '{collection_name}' to recreate with sparse vector support...")
+                qdrant.delete_collection(collection_name)
+            
             qdrant.ensure_collection(
                 collection_name=collection_name,
-                vector_size=settings.EMBEDDING_DIMENSION
+                vector_size=settings.EMBEDDING_DIMENSION,
+                enable_sparse_vectors=True
             )
             
             # Get sample documents
@@ -93,16 +100,27 @@ def ingest_documents():
             # Prepare documents for embedding
             doc_texts = [doc["text"] for doc in sample_docs]
             
+            # Initialize sparse vector generator (using fastembed - no fitting needed)
+            logger.info("Initializing sparse vector generator...")
+            sparse_gen = SparseVectorGenerator(model_name="Qdrant/bm25")
+            
             # Generate embeddings
-            logger.info("Generating embeddings...")
+            logger.info("Generating dense embeddings...")
             embedding_result = embedder.embed_documents(doc_texts)
             
             if len(embedding_result.embeddings) != len(sample_docs):
                 raise ValueError(f"Mismatch: {len(embedding_result.embeddings)} embeddings for {len(sample_docs)} documents")
             
+            # Generate sparse embeddings
+            logger.info("Generating sparse embeddings...")
+            sparse_embeddings = sparse_gen.embed_documents(doc_texts)
+            
+            if len(sparse_embeddings) != len(sample_docs):
+                raise ValueError(f"Mismatch: {len(sparse_embeddings)} sparse embeddings for {len(sample_docs)} documents")
+            
             # Create vector points
             points = []
-            for i, (doc_data, embedding) in enumerate(zip(sample_docs, embedding_result.embeddings)):
+            for i, (doc_data, embedding, sparse_vector) in enumerate(zip(sample_docs, embedding_result.embeddings, sparse_embeddings)):
                 doc_id = str(uuid.uuid4())
                 
                 payload = {
@@ -116,7 +134,8 @@ def ingest_documents():
                 point = VectorPoint(
                     id=doc_id,
                     vector=embedding,
-                    payload=payload
+                    payload=payload,
+                    sparse_vectors={"bm25": sparse_vector} if sparse_vector else None
                 )
                 points.append(point.to_point_struct())
             

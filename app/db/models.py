@@ -39,15 +39,31 @@ class VectorPoint:
     id: str
     vector: List[float]
     payload: Dict[str, Any]
+    sparse_vectors: Optional[Dict[str, Dict[int, float]]] = None
     
     def to_point_struct(self):
         """Convert to Qdrant PointStruct."""
-        from qdrant_client.models import PointStruct
-        return PointStruct(
-            id=self.id,
-            vector=self.vector,
-            payload=self.payload
-        )
+        from qdrant_client.models import PointStruct, SparseVector
+        
+        if self.sparse_vectors:
+            vectors_dict = {"": self.vector}
+            for name, sparse_dict in self.sparse_vectors.items():
+                if sparse_dict:
+                    indices = list(sparse_dict.keys())
+                    values = list(sparse_dict.values())
+                    vectors_dict[name] = SparseVector(indices=indices, values=values)
+            
+            return PointStruct(
+                id=self.id,
+                vector=vectors_dict,
+                payload=self.payload
+            )
+        else:
+            return PointStruct(
+                id=self.id,
+                vector=self.vector,
+                payload=self.payload
+            )
 
 
 @dataclass

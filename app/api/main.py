@@ -51,7 +51,23 @@ async def lifespan(app: FastAPI):
         logger.info(f"Temperature: {settings.LLM_TEMPERATURE}")
         logger.info(f"Max tokens: {settings.LLM_MAX_TOKENS}")
         
+        logger.info("Initializing sparse vector generator for hybrid search...")
+        from app.retrieval import get_sparse_vector_generator, get_retriever
+        
+        sparse_gen = get_sparse_vector_generator(model_name="Qdrant/bm25")
+        if sparse_gen:
+            logger.info("Sparse vector generator initialized successfully - hybrid search enabled")
+        else:
+            logger.warning("Sparse vector generator not initialized - using dense-only search")
+        
+        retriever = get_retriever(
+            k=8,
+            use_hybrid_search=True if sparse_gen else False,
+            sparse_vector_generator=sparse_gen
+        )
+        
         rag_service = RAGService(
+            retriever=retriever,
             llm_client=llm_client,
             default_k=8,
             default_rerank_top_k=5,

@@ -10,6 +10,8 @@ from qdrant_client.models import (
     VectorParams,
     PointStruct,
     Filter,
+    SparseVectorParams,
+    VectorsConfig
 )
 from qdrant_client.http import models
 from app.core.config import settings
@@ -101,7 +103,8 @@ class QdrantDB:
         self,
         collection_name: Optional[str] = None,
         vector_size: Optional[int] = None,
-        distance: Distance = Distance.COSINE
+        distance: Distance = Distance.COSINE,
+        enable_sparse_vectors: bool = True
     ) -> bool:
         """
         Create a new collection in Qdrant.
@@ -130,8 +133,12 @@ class QdrantDB:
                 vectors_config=VectorParams(
                     size=vector_size,
                     distance=distance
-                )
+                ),
+                sparse_vectors_config={
+                    "bm25": SparseVectorParams()
+                } if enable_sparse_vectors else None
             )
+            
             logger.info(f"Collection '{collection_name}' created successfully")
             return True
         except Exception as e:
@@ -251,6 +258,89 @@ class QdrantDB:
             logger.error(f"Search failed: {e}")
             raise
     
+    def hybrid_search(
+        self,
+        query_vector: List[float],
+        query_sparse_vector: Optional[Dict[int, float]] = None,
+        limit: int = 10,
+        collection_name: Optional[str] = None,
+        score_threshold: Optional[float] = None,
+        filter: Optional[Filter] = None,
+        prefetch_limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """
+        Hybrid search combining dense (semantic) and sparse (BM25) vectors.
+        
+        Args:
+            query_vector: Dense query vector (semantic embedding)
+            query_sparse_vector: Sparse query vector (BM25 keywords) as {token_id: score}
+            limit: Number of results to return
+            collection_name: Name of the collection
+            score_threshold: Minimum similarity score
+            filter: Optional filter conditions
+            prefetch_limit: Number of candidates to fetch from each sub-query
+        
+        Returns:
+            List of search results with payload and scores
+        """
+        collection_name = collection_name or self.collection_name
+        
+        try:
+            from qdrant_client.models import Prefetch, SparseVector, FusionQuery, Fusion
+            
+            if query_sparse_vector:
+                indices = list(query_sparse_vector.keys())
+                values = list(query_sparse_vector.values())
+                sparse_vector_obj = SparseVector(
+                    indices=indices,
+                    values=values
+                )
+                
+                prefetch_queries = [
+                    Prefetch(
+                        query=query_vector,
+                        limit=prefetch_limit
+                    ),
+                    Prefetch(
+                        query=sparse_vector_obj,
+                        using="bm25",
+                        limit=prefetch_limit
+                    )
+                ]
+                
+                fusion_query = FusionQuery(fusion=Fusion.RRF)
+                
+                response = self._client.query_points(
+                    collection_name=collection_name,
+                    prefetch=prefetch_queries,
+                    query=fusion_query,
+                    limit=limit,
+                    score_threshold=score_threshold,
+                    query_filter=filter
+                )
+            else:
+                response = self._client.query_points(
+                    collection_name=collection_name,
+                    query=query_vector,
+                    limit=limit,
+                    score_threshold=score_threshold,
+                    query_filter=filter
+                )
+            
+            search_results = []
+            for point in response.points:
+                search_results.append({
+                    "id": str(point.id),
+                    "score": point.score if hasattr(point, 'score') else 0.0,
+                    "payload": point.payload if hasattr(point, 'payload') else {}
+                })
+            
+            logger.debug(f"Found {len(search_results)} results from hybrid search")
+            return search_results
+        except Exception as e:
+            logger.error(f"Hybrid search failed: {e}")
+            raise
+    
     def get_point(self, point_id: str, collection_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Retrieve a specific point by ID.
@@ -342,7 +432,8 @@ class QdrantDB:
         self,
         collection_name: Optional[str] = None,
         vector_size: Optional[int] = None,
-        distance: Distance = Distance.COSINE
+        distance: Distance = Distance.COSINE,
+        enable_sparse_vectors: bool = True
     ):
         """
         Ensure collection exists, create if it doesn't.
@@ -351,11 +442,12 @@ class QdrantDB:
             collection_name: Name of the collection
             vector_size: Size of the vectors
             distance: Distance metric
+            enable_sparse_vectors: Whether to enable sparse vectors for hybrid search
         """
         collection_name = collection_name or self.collection_name
         
         if not self.collection_exists(collection_name):
-            self.create_collection(collection_name, vector_size, distance)
+            self.create_collection(collection_name, vector_size, distance, enable_sparse_vectors)
         else:
             logger.debug(f"Collection '{collection_name}' already exists")
     

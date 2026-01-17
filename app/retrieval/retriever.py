@@ -13,6 +13,7 @@ from app.core.logging import get_logger
 from app.db.qdrant_client import QdrantDB, get_qdrant_db
 from app.db.models import SearchResult
 from app.embeddings import get_embedder, Embedder
+from app.retrieval.sparse_vectors import SparseVectorGenerator
 
 logger = get_logger(__name__)
 
@@ -26,7 +27,9 @@ class VectorRetriever:
         embedder: Optional[Embedder] = None,
         collection_name: Optional[str] = None,
         k: int = 10,
-        score_threshold: Optional[float] = None
+        score_threshold: Optional[float] = None,
+        use_hybrid_search: bool = True,
+        sparse_vector_generator: Optional[SparseVectorGenerator] = None
     ):
         """
         Initialize the vector retriever.
@@ -37,21 +40,26 @@ class VectorRetriever:
             collection_name: Collection name to search in
             k: Number of documents to retrieve (default: 10)
             score_threshold: Minimum similarity score threshold (optional)
+            use_hybrid_search: Whether to use hybrid search (BM25 + semantic)
+            sparse_vector_generator: SparseVectorGenerator instance for BM25 (optional)
         """
         self.qdrant = qdrant_client or get_qdrant_db()
         self.embedder = embedder or get_embedder()
         self.collection_name = collection_name or settings.QDRANT_COLLECTION_NAME
         self.k = k
         self.score_threshold = score_threshold
+        self.use_hybrid_search = use_hybrid_search
+        self.sparse_gen = sparse_vector_generator
         
-        logger.info(f"VectorRetriever initialized with k={k}, collection={self.collection_name}")
+        logger.info(f"VectorRetriever initialized with k={k}, collection={self.collection_name}, hybrid_search={use_hybrid_search}")
     
     def retrieve(
         self,
         query: str,
         k: Optional[int] = None,
         score_threshold: Optional[float] = None,
-        filter: Optional[Dict[str, Any]] = None
+        filter: Optional[Dict[str, Any]] = None,
+        use_hybrid_search: Optional[bool] = None
     ) -> List[SearchResult]:
         """
         Retrieve relevant documents for a query.
@@ -61,12 +69,14 @@ class VectorRetriever:
             k: Number of documents to retrieve (overrides instance default)
             score_threshold: Minimum similarity score (overrides instance default)
             filter: Optional Qdrant filter for metadata filtering
+            use_hybrid_search: Override instance-level hybrid search setting
         
         Returns:
             List of SearchResult objects
         """
         k = k if k is not None else self.k
         score_threshold = score_threshold if score_threshold is not None else self.score_threshold
+        use_hybrid = use_hybrid_search if use_hybrid_search is not None else self.use_hybrid_search
         
         try:
             logger.debug(f"Retrieving documents for query: {query[:50]}...")
@@ -92,13 +102,37 @@ class VectorRetriever:
                 except ImportError:
                     logger.warning("Could not import Qdrant filter models, skipping filter")
             
-            results = self.qdrant.search(
-                query_vector=query_embedding,
-                limit=k,
-                collection_name=self.collection_name,
-                score_threshold=score_threshold,
-                filter=qdrant_filter
-            )
+            # Hybrid search: combine dense and sparse vectors
+            if use_hybrid and self.sparse_gen and self.sparse_gen.is_fitted():
+                try:
+                    query_sparse = self.sparse_gen.generate_query_sparse_vector(query)
+                    results = self.qdrant.hybrid_search(
+                        query_vector=query_embedding,
+                        query_sparse_vector=query_sparse,
+                        limit=k,
+                        collection_name=self.collection_name,
+                        score_threshold=score_threshold,
+                        filter=qdrant_filter
+                    )
+                    logger.debug("Using hybrid search (BM25 + semantic)")
+                except Exception as e:
+                    logger.warning(f"Hybrid search failed, falling back to dense-only: {e}")
+                    results = self.qdrant.search(
+                        query_vector=query_embedding,
+                        limit=k,
+                        collection_name=self.collection_name,
+                        score_threshold=score_threshold,
+                        filter=qdrant_filter
+                    )
+            else:
+                # Fallback to dense-only search
+                results = self.qdrant.search(
+                    query_vector=query_embedding,
+                    limit=k,
+                    collection_name=self.collection_name,
+                    score_threshold=score_threshold,
+                    filter=qdrant_filter
+                )
             
             search_results = [
                 SearchResult.from_qdrant_result(result) for result in results
@@ -251,7 +285,9 @@ def get_retriever(
     collection_name: Optional[str] = None,
     k: int = 10,
     score_threshold: Optional[float] = None,
-    langchain_compatible: bool = False
+    langchain_compatible: bool = False,
+    use_hybrid_search: bool = True,
+    sparse_vector_generator: Optional[SparseVectorGenerator] = None
 ) -> Union[VectorRetriever, LangChainVectorRetriever]:
     """
     Get a retriever instance.
@@ -263,6 +299,8 @@ def get_retriever(
         k: Number of documents to retrieve
         score_threshold: Optional minimum similarity score
         langchain_compatible: If True, returns LangChain-compatible retriever
+        use_hybrid_search: Whether to use hybrid search (BM25 + semantic)
+        sparse_vector_generator: Optional SparseVectorGenerator for hybrid search
     
     Returns:
         VectorRetriever or LangChainVectorRetriever instance
@@ -272,7 +310,9 @@ def get_retriever(
         embedder=embedder,
         collection_name=collection_name,
         k=k,
-        score_threshold=score_threshold
+        score_threshold=score_threshold,
+        use_hybrid_search=use_hybrid_search,
+        sparse_vector_generator=sparse_vector_generator
     )
     
     if langchain_compatible:
