@@ -250,10 +250,12 @@ class LangChainGeminiEmbeddings(LangChainEmbeddings):
         """
         if not texts:
             return []
-        
-        result = self._embedder.embed(
+        # The Gemini API limits batch size to 100 items per request.
+        # Use the embedder's batching helper to stay within that limit.
+        result = self._embedder.embed_batch(
             texts=texts,
-            task_type=self.task_type_for_documents
+            task_type=self.task_type_for_documents,
+            batch_size=100,
         )
         return result.embeddings
     
