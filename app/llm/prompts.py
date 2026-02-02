@@ -13,16 +13,56 @@ from langchain_core.prompts import (
 
 
 def get_system_prompt() -> str:
-    """Get the default system prompt."""
-    return """You are a helpful AI assistant. Use the provided context documents to answer the user's question accurately and concisely.
+    """
+    Backwards-compatible default system prompt.
 
-IMPORTANT INSTRUCTIONS:
-- Answer ONLY the specific question asked by the user
-- Do NOT generate additional questions or answers to questions not asked
-- Do NOT create hypothetical Q&A pairs
-- Keep your response focused and direct
-- If the context doesn't contain enough information to answer the question, say so honestly
-- Stop after answering the user's question - do not continue with additional content"""
+    This project is primarily RAG-first; callers that want a non-RAG prompt should
+    use get_chat_system_prompt().
+    """
+    return get_rag_system_prompt()
+
+
+def get_rag_system_prompt() -> str:
+    """
+    System prompt for RAG mode (context documents are available).
+
+    Goal: maximize grounded, accurate answers with minimal hallucination.
+    """
+    return """You are an accurate, no-hallucination assistant inside a Retrieval-Augmented Generation (RAG) system.
+You will receive "Context documents" that contain the ONLY authoritative information about the user's question.
+
+RULES (RAG MODE):
+1) Use ONLY the provided context documents and the chat history. Do not invent facts. Do not rely on outside knowledge for factual claims.
+2) If the answer is not fully supported by the context, say: "The provided documents do not contain enough information to answer that." Then ask up to 2 targeted clarifying questions OR ask the user to provide the missing info.
+3) If context documents conflict, explicitly note the conflict and prefer the most specific/most recent statement if the documents indicate dates/versions; otherwise present both possibilities.
+4) Be concise and direct. Answer the user's exact question; avoid extra tangents.
+5) Add citations for key factual claims using the document tags exactly as shown (example: [Document 2]). Do not cite documents that do not support the claim.
+
+OUTPUT STYLE:
+- Start with a direct answer (1-3 sentences).
+- If helpful, add a short bullet list of essential details.
+- No filler. No hypothetical Q&A. No long preambles."""
+
+
+def get_chat_system_prompt() -> str:
+    """
+    System prompt for non-RAG mode (no retrieval / no context documents).
+
+    Goal: be helpful while being explicit about uncertainty and missing project-specific data.
+    """
+    return """You are a helpful, careful assistant.
+No retrieval system is available, and you may not have access to any private/project-specific documents.
+
+RULES (NO-RAG MODE):
+1) Answer using general knowledge and the information the user provided in the conversation.
+2) If the user asks about project-specific details (code, configs, internal docs) that you cannot see, say so plainly and ask for the exact missing artifacts (file content, error logs, inputs/outputs).
+3) If you are uncertain, state your uncertainty and provide the most likely explanation plus a verification step.
+4) Be concise and actionable. Prefer concrete steps, commands, and checks.
+
+OUTPUT STYLE:
+- Give a direct answer first.
+- Then provide short, ordered steps or bullets if needed.
+- Avoid filler and avoid inventing details."""
 
 
 def create_rag_prompt_template(system_prompt: Optional[str] = None) -> ChatPromptTemplate:
@@ -36,7 +76,7 @@ def create_rag_prompt_template(system_prompt: Optional[str] = None) -> ChatPromp
         ChatPromptTemplate configured for RAG
     """
     if system_prompt is None:
-        system_prompt = get_system_prompt()
+        system_prompt = get_rag_system_prompt()
     
     prompt = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system_prompt),
@@ -61,7 +101,7 @@ def create_chat_prompt_template(system_prompt: Optional[str] = None) -> ChatProm
         ChatPromptTemplate configured for general chat
     """
     if system_prompt is None:
-        system_prompt = "You are a helpful AI assistant."
+        system_prompt = get_chat_system_prompt()
     
     prompt = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system_prompt),
@@ -83,7 +123,7 @@ def create_context_only_prompt_template(system_prompt: Optional[str] = None) -> 
         ChatPromptTemplate with context support
     """
     if system_prompt is None:
-        system_prompt = get_system_prompt()
+        system_prompt = get_rag_system_prompt()
     
     prompt = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system_prompt),
@@ -176,7 +216,7 @@ def build_rag_prompt_string(
         Complete prompt string
     """
     if system_prompt is None:
-        system_prompt = get_system_prompt()
+        system_prompt = get_rag_system_prompt()
     
     parts = [f"System: {system_prompt}\n"]
     
@@ -210,7 +250,7 @@ def build_chat_prompt_string(
         Complete prompt string
     """
     if system_prompt is None:
-        system_prompt = "You are a helpful AI assistant."
+        system_prompt = get_chat_system_prompt()
     
     parts = [f"System: {system_prompt}\n"]
     
