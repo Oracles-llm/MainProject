@@ -8,12 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.services.rag_service import RAGService, RerankStrategy
 from app.api.routes import router
 
 logger = get_logger(__name__)
 
-rag_service: RAGService = None
+rag_service = None
+llm_client = None
 
 
 @asynccontextmanager
@@ -23,6 +23,7 @@ async def lifespan(app: FastAPI):
     Loads the model once on startup and cleans up on shutdown.
     """
     global rag_service
+    global llm_client
     
     logger.info("=" * 60)
     logger.info("Starting RAG Chat API Application")
@@ -33,7 +34,6 @@ async def lifespan(app: FastAPI):
         logger.info(f"LLM Provider: {settings.LLM_PROVIDER}")
         logger.info(f"LLM Model Path: {settings.LLM_MODEL_PATH}")
         
-        llm_client = None
         if settings.LLM_PROVIDER.lower() == "llama_cpp":
             if not settings.LLM_MODEL_PATH:
                 raise ValueError(
@@ -51,31 +51,35 @@ async def lifespan(app: FastAPI):
         logger.info(f"Temperature: {settings.LLM_TEMPERATURE}")
         logger.info(f"Max tokens: {settings.LLM_MAX_TOKENS}")
         
-        logger.info("Initializing sparse vector generator for hybrid search...")
-        from app.retrieval import get_sparse_vector_generator, get_retriever
-        
-        sparse_gen = get_sparse_vector_generator(model_name="Qdrant/bm25")
-        if sparse_gen:
-            logger.info("Sparse vector generator initialized successfully - hybrid search enabled")
+        if settings.DISABLE_RAG:
+            logger.info("RAG disabled - routing queries directly to the LLM")
         else:
-            logger.warning("Sparse vector generator not initialized - using dense-only search")
-        
-        retriever = get_retriever(
-            k=8,
-            use_hybrid_search=True if sparse_gen else False,
-            sparse_vector_generator=sparse_gen
-        )
-        
-        rag_service = RAGService(
-            retriever=retriever,
-            llm_client=llm_client,
-            default_k=8,
-            default_rerank_top_k=None,
-            default_use_reranking=True,
-            default_rerank_strategy=RerankStrategy.BM25
-        )
-        
-        logger.info("RAG service initialized successfully!")
+            logger.info("Initializing sparse vector generator for hybrid search...")
+            from app.retrieval import get_sparse_vector_generator, get_retriever
+            from app.services.rag_service import RAGService, RerankStrategy
+
+            sparse_gen = get_sparse_vector_generator(model_name="Qdrant/bm25")
+            if sparse_gen:
+                logger.info("Sparse vector generator initialized successfully - hybrid search enabled")
+            else:
+                logger.warning("Sparse vector generator not initialized - using dense-only search")
+
+            retriever = get_retriever(
+                k=8,
+                use_hybrid_search=True if sparse_gen else False,
+                sparse_vector_generator=sparse_gen
+            )
+
+            rag_service = RAGService(
+                retriever=retriever,
+                llm_client=llm_client,
+                default_k=8,
+                default_rerank_top_k=None,
+                default_use_reranking=True,
+                default_rerank_strategy=RerankStrategy.BM25
+            )
+
+            logger.info("RAG service initialized successfully!")
         logger.info("=" * 60)
         logger.info("Application ready to accept requests")
         logger.info("=" * 60)
@@ -87,11 +91,11 @@ async def lifespan(app: FastAPI):
     yield
     
     logger.info("Shutting down application...")
-    if rag_service and rag_service.llm_client:
+    if llm_client:
         try:
-            if hasattr(rag_service.llm_client, 'llm') and hasattr(rag_service.llm_client.llm, 'client'):
-                if hasattr(rag_service.llm_client.llm.client, 'close'):
-                    rag_service.llm_client.llm.client.close()
+            if hasattr(llm_client, 'llm') and hasattr(llm_client.llm, 'client'):
+                if hasattr(llm_client.llm.client, 'close'):
+                    llm_client.llm.client.close()
                     logger.info("LLM client closed")
         except Exception as e:
             logger.warning(f"Error closing LLM client: {e}")

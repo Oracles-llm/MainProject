@@ -48,6 +48,8 @@ class Settings:
     
     LLM_API_KEY: Optional[str] = os.getenv("LLM_API_KEY", None)
     LLM_BASE_URL: Optional[str] = os.getenv("LLM_BASE_URL", None)
+
+    DISABLE_RAG: bool = os.getenv("DISABLE_RAG", "False").lower() == "true"
     
     HYBRID_SEARCH_SCORE_THRESHOLD: Optional[float] = float(os.getenv("HYBRID_SEARCH_SCORE_THRESHOLD")) if os.getenv("HYBRID_SEARCH_SCORE_THRESHOLD") else None
     RERANKER_TOP_K: int = int(os.getenv("RERANKER_TOP_K", "5"))

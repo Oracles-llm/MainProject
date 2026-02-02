@@ -3,16 +3,21 @@ FastAPI routes for the RAG chat API.
 """
 
 from fastapi import APIRouter, HTTPException
+from typing import TYPE_CHECKING
 from app.api.schemas import ChatRequest, ChatResponse
-from app.services.rag_service import RAGService
 from app.core.logging import get_logger
+from app.core.config import settings
+from app.llm import LLMClient
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
+if TYPE_CHECKING:
+    from app.services.rag_service import RAGService
 
-def get_rag_service() -> RAGService:
+
+def get_rag_service() -> "RAGService":
     """Dependency to get RAG service instance."""
     import app.api.main as api_main
     if api_main.rag_service is None:
@@ -21,6 +26,17 @@ def get_rag_service() -> RAGService:
             detail="RAG service not initialized. Please wait for the application to start."
         )
     return api_main.rag_service
+
+
+def get_llm_client() -> LLMClient:
+    """Dependency to get LLM client instance."""
+    import app.api.main as api_main
+    if api_main.llm_client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LLM client not initialized. Please wait for the application to start."
+        )
+    return api_main.llm_client
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -39,11 +55,15 @@ async def chat(request: ChatRequest) -> ChatResponse:
         ChatResponse with generated response
     """
     try:
-        rag_service = get_rag_service()
         logger.info(f"Received chat request: query='{request.query[:50]}...'")
-        
+
+        if settings.DISABLE_RAG:
+            llm_client = get_llm_client()
+            response = llm_client.chat(user_query=request.query)
+            return ChatResponse(response=response)
+
+        rag_service = get_rag_service()
         response = rag_service.query(query=request.query)
-        
         return ChatResponse(response=response.answer)
     
     except Exception as e:
@@ -59,6 +79,7 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "service": "RAG Chat API"
+        "service": "RAG Chat API",
+        "rag_enabled": not settings.DISABLE_RAG
     }
 
