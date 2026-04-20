@@ -16,7 +16,7 @@ from app.db.models import Document, VectorPoint
 from app.embeddings import get_embedder
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.retrieval.sparse_vectors import SparseVectorGenerator
+from app.retrieval import get_sparse_vector_generator
 
 logger = get_logger(__name__)
 
@@ -79,7 +79,13 @@ def ingest_documents():
         local_path = "./data/qdrant"
         
         with QdrantDB(mode="local", local_path=local_path) as qdrant:
-            # Ensure collection exists with sparse vector support
+            sparse_gen = get_sparse_vector_generator(model_name="Qdrant/bm25")
+            enable_sparse_vectors = sparse_gen is not None
+
+            if not enable_sparse_vectors:
+                logger.warning("fastembed is unavailable. Sample ingestion will continue with dense-only vectors.")
+
+            # Ensure collection exists with the current vector configuration
             collection_name = settings.QDRANT_COLLECTION_NAME
             logger.info(f"Ensuring collection '{collection_name}' exists...")
             
@@ -90,7 +96,7 @@ def ingest_documents():
             qdrant.ensure_collection(
                 collection_name=collection_name,
                 vector_size=settings.EMBEDDING_DIMENSION,
-                enable_sparse_vectors=True
+                enable_sparse_vectors=enable_sparse_vectors
             )
             
             # Get sample documents
@@ -100,10 +106,6 @@ def ingest_documents():
             # Prepare documents for embedding
             doc_texts = [doc["text"] for doc in sample_docs]
             
-            # Initialize sparse vector generator (using fastembed - no fitting needed)
-            logger.info("Initializing sparse vector generator...")
-            sparse_gen = SparseVectorGenerator(model_name="Qdrant/bm25")
-            
             # Generate embeddings
             logger.info("Generating dense embeddings...")
             embedding_result = embedder.embed_documents(doc_texts)
@@ -111,12 +113,15 @@ def ingest_documents():
             if len(embedding_result.embeddings) != len(sample_docs):
                 raise ValueError(f"Mismatch: {len(embedding_result.embeddings)} embeddings for {len(sample_docs)} documents")
             
-            # Generate sparse embeddings
-            logger.info("Generating sparse embeddings...")
-            sparse_embeddings = sparse_gen.embed_documents(doc_texts)
-            
-            if len(sparse_embeddings) != len(sample_docs):
-                raise ValueError(f"Mismatch: {len(sparse_embeddings)} sparse embeddings for {len(sample_docs)} documents")
+            sparse_embeddings = [None] * len(sample_docs)
+            if sparse_gen and enable_sparse_vectors:
+                logger.info("Generating sparse embeddings...")
+                sparse_embeddings = sparse_gen.embed_documents(doc_texts)
+                
+                if len(sparse_embeddings) != len(sample_docs):
+                    raise ValueError(f"Mismatch: {len(sparse_embeddings)} sparse embeddings for {len(sample_docs)} documents")
+            else:
+                logger.info("Skipping sparse embeddings; dense-only ingestion is active")
             
             # Create vector points
             points = []

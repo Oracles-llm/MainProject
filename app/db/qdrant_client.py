@@ -3,6 +3,8 @@ Qdrant client for vector database operations.
 Handles connection, collection management, and vector operations.
 """
 
+from pathlib import Path
+import shutil
 from typing import List, Optional, Dict, Any
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -18,6 +20,10 @@ from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class CollectionDimensionMismatchError(RuntimeError):
+    """Raised when the configured embedding dimension does not match the stored collection."""
 
 
 class QdrantDB:
@@ -93,6 +99,30 @@ class QdrantDB:
         except Exception as e:
             logger.error(f"Failed to connect to Qdrant: {e}")
             raise
+
+    def _purge_local_collection_dir(self, collection_name: str) -> None:
+        """
+        Remove the on-disk collection directory for local Qdrant mode.
+
+        Qdrant local can leave behind stale sqlite storage when collections are
+        deleted and recreated within the same persistent path. Purging the
+        collection directory ensures the recreated collection uses the new
+        vector schema.
+        """
+        if self.mode != "local" or not self.local_path:
+            return
+
+        collection_dir = Path(self.local_path).resolve() / "collection" / collection_name
+        local_root = Path(self.local_path).resolve()
+
+        try:
+            collection_dir.relative_to(local_root)
+        except ValueError:
+            raise RuntimeError(f"Refusing to delete collection path outside local root: {collection_dir}")
+
+        if collection_dir.exists():
+            shutil.rmtree(collection_dir)
+            logger.info(f"Purged local Qdrant collection directory: {collection_dir}")
     
     @property
     def client(self) -> QdrantClient:
@@ -144,6 +174,40 @@ class QdrantDB:
         except Exception as e:
             logger.error(f"Failed to create collection '{collection_name}': {e}")
             raise
+
+    def get_collection_vector_size(self, collection_name: Optional[str] = None) -> Optional[int]:
+        """
+        Get the configured dense vector size for a collection.
+
+        Args:
+            collection_name: Name of the collection
+
+        Returns:
+            Dense vector size if available, otherwise None
+        """
+        collection_name = collection_name or self.collection_name
+
+        try:
+            info = self._client.get_collection(collection_name)
+            vectors_config = info.config.params.vectors
+
+            if hasattr(vectors_config, "size"):
+                return vectors_config.size
+
+            if isinstance(vectors_config, dict):
+                first_value = next(iter(vectors_config.values()), None)
+                if first_value is not None and hasattr(first_value, "size"):
+                    return first_value.size
+
+            if hasattr(vectors_config, "root") and isinstance(vectors_config.root, dict):
+                first_value = next(iter(vectors_config.root.values()), None)
+                if first_value is not None and hasattr(first_value, "size"):
+                    return first_value.size
+        except Exception as e:
+            logger.error(f"Failed to get vector size for collection '{collection_name}': {e}")
+            return None
+
+        return None
     
     def collection_exists(self, collection_name: Optional[str] = None) -> bool:
         """
@@ -178,6 +242,14 @@ class QdrantDB:
         
         try:
             self._client.delete_collection(collection_name)
+
+            if self.mode == "local":
+                # Reconnect after deletion so local in-memory handles do not keep
+                # referencing the stale sqlite-backed collection layout.
+                self.close()
+                self._purge_local_collection_dir(collection_name)
+                self._connect()
+
             logger.info(f"Collection '{collection_name}' deleted successfully")
             return True
         except Exception as e:
@@ -443,7 +515,8 @@ class QdrantDB:
         collection_name: Optional[str] = None,
         vector_size: Optional[int] = None,
         distance: Distance = Distance.COSINE,
-        enable_sparse_vectors: bool = True
+        enable_sparse_vectors: bool = True,
+        recreate_on_dimension_mismatch: bool = False
     ):
         """
         Ensure collection exists, create if it doesn't.
@@ -453,13 +526,31 @@ class QdrantDB:
             vector_size: Size of the vectors
             distance: Distance metric
             enable_sparse_vectors: Whether to enable sparse vectors for hybrid search
+            recreate_on_dimension_mismatch: Delete and recreate the collection if dimensions differ
         """
         collection_name = collection_name or self.collection_name
+        vector_size = vector_size or settings.EMBEDDING_DIMENSION
         
         if not self.collection_exists(collection_name):
             self.create_collection(collection_name, vector_size, distance, enable_sparse_vectors)
         else:
-            logger.debug(f"Collection '{collection_name}' already exists")
+            existing_size = self.get_collection_vector_size(collection_name)
+
+            if existing_size is not None and existing_size != vector_size:
+                message = (
+                    f"Collection '{collection_name}' has vector size {existing_size}, "
+                    f"but EMBEDDING_DIMENSION is {vector_size}. "
+                    f"Recreate the collection and re-ingest documents."
+                )
+
+                if recreate_on_dimension_mismatch:
+                    logger.warning("%s Recreating collection because recreate_on_dimension_mismatch=True.", message)
+                    self.delete_collection(collection_name)
+                    self.create_collection(collection_name, vector_size, distance, enable_sparse_vectors)
+                else:
+                    raise CollectionDimensionMismatchError(message)
+            else:
+                logger.debug(f"Collection '{collection_name}' already exists")
     
     def close(self):
         """Close the Qdrant client connection."""

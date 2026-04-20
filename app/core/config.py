@@ -31,8 +31,14 @@ class Settings:
     QDRANT_URL: Optional[str] = os.getenv("QDRANT_URL", None)
     QDRANT_LOCAL_PATH: Optional[str] = os.getenv("QDRANT_LOCAL_PATH", None)
     
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "models/embedding-001")
     EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "768"))
+    EMBEDDING_MODEL_PATH: Optional[str] = os.getenv("EMBEDDING_MODEL_PATH", None)
+    EMBEDDING_N_CTX: int = int(os.getenv("EMBEDDING_N_CTX", "8192"))
+    EMBEDDING_N_THREADS: Optional[int] = int(os.getenv("EMBEDDING_N_THREADS")) if os.getenv("EMBEDDING_N_THREADS") else None
+    EMBEDDING_N_GPU_LAYERS: int = int(os.getenv("EMBEDDING_N_GPU_LAYERS", "0"))
+    EMBEDDING_VERBOSE: bool = os.getenv("EMBEDDING_VERBOSE", "False").lower() == "true"
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY", None)
     
     LLM_MODEL_PATH: Optional[str] = os.getenv("LLM_MODEL_PATH", None)

@@ -10,7 +10,7 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.db.qdrant_client import QdrantDB, get_qdrant_db
+from app.db.qdrant_client import QdrantDB, get_qdrant_db, CollectionDimensionMismatchError
 from app.db.models import SearchResult
 from app.embeddings import get_embedder, Embedder
 from app.retrieval.sparse_vectors import SparseVectorGenerator
@@ -82,6 +82,14 @@ class VectorRetriever:
         
         try:
             logger.debug(f"Retrieving documents for query: {query[:50]}...")
+
+            existing_size = self.qdrant.get_collection_vector_size(self.collection_name)
+            if existing_size is not None and existing_size != settings.EMBEDDING_DIMENSION:
+                raise CollectionDimensionMismatchError(
+                    f"Collection '{self.collection_name}' is storing {existing_size}-dim vectors, "
+                    f"but the current embedding model produces {settings.EMBEDDING_DIMENSION}-dim vectors. "
+                    f"Recreate the collection and re-ingest documents."
+                )
             
             query_embedding = self.embedder.embed_query(query)
             

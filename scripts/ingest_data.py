@@ -52,6 +52,11 @@ def main() -> int:
 			"If omitted, the pipeline's default (currently '**/*.md') is used."
 		),
 	)
+	parser.add_argument(
+		"--recreate-collection",
+		action="store_true",
+		help="Delete and recreate the target Qdrant collection if the embedding dimension changed.",
+	)
 
 	args = parser.parse_args()
 
@@ -63,6 +68,7 @@ def main() -> int:
 	config = IngestionConfig(
 		chunk_size=args.chunk_size,
 		chunk_overlap=args.chunk_overlap,
+		recreate_collection=args.recreate_collection,
 	)
 	if args.glob is not None:
 		config.file_glob = args.glob

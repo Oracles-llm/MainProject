@@ -1,13 +1,29 @@
 """
 Embedding service for generating text embeddings.
-Currently uses Gemini Embedding API, designed to be easily switchable to self-hosted models.
-Includes LangChain compatibility.
+Supports Gemini API and local llama.cpp embedding models.
 """
 
+from __future__ import annotations
+
+from pathlib import Path
 from typing import List, Optional, Union
 import os
-from google import genai
-from google.genai import types
+
+try:
+    from google import genai
+    from google.genai import types
+    GEMINI_EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    genai = None
+    types = None
+    GEMINI_EMBEDDINGS_AVAILABLE = False
+
+try:
+    from llama_cpp import Llama
+    LLAMA_CPP_AVAILABLE = True
+except ImportError:
+    Llama = None
+    LLAMA_CPP_AVAILABLE = False
 
 try:
     from langchain_core.embeddings import Embeddings as LangChainEmbeddings
@@ -28,12 +44,18 @@ logger = get_logger(__name__)
 
 
 class Embedder:
-    """Embedding service using Gemini API."""
+    """Embedding service using either Gemini API or local llama.cpp models."""
     
     def __init__(
         self,
         api_key: Optional[str] = None,
         model: str = "models/embedding-001",
+        provider: Optional[str] = None,
+        model_path: Optional[str] = None,
+        n_ctx: Optional[int] = None,
+        n_threads: Optional[int] = None,
+        n_gpu_layers: Optional[int] = None,
+        verbose: Optional[bool] = None,
         default_task_type: EmbeddingTaskType = EmbeddingTaskType.RETRIEVAL_DOCUMENT,
         default_output_dimensionality: Optional[int] = None
     ):
@@ -42,23 +64,107 @@ class Embedder:
         
         Args:
             api_key: Gemini API key (defaults to GEMINI_API_KEY env var)
-            model: Embedding model name (default: models/embedding-001, can use gemini-embedding-001)
+            model: Embedding model name
+            provider: Embedding provider ("gemini" or "local")
+            model_path: Local GGUF path for llama.cpp embedding models
+            n_ctx: Context window for local embedding model
+            n_threads: CPU threads for local embedding model
+            n_gpu_layers: GPU offload layers for local embedding model
+            verbose: Enable verbose local model logging
             default_task_type: Default task type for embeddings
             default_output_dimensionality: Default output dimension (128-3072, recommended: 768)
         """
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY") or settings.GEMINI_API_KEY
+        self.provider = (provider or settings.EMBEDDING_PROVIDER).lower()
+        self.model = model
+        self.model_path = model_path or settings.EMBEDDING_MODEL_PATH
+        self.n_ctx = n_ctx if n_ctx is not None else settings.EMBEDDING_N_CTX
+        self.n_threads = n_threads if n_threads is not None else settings.EMBEDDING_N_THREADS
+        self.n_gpu_layers = n_gpu_layers if n_gpu_layers is not None else settings.EMBEDDING_N_GPU_LAYERS
+        self.verbose = verbose if verbose is not None else settings.EMBEDDING_VERBOSE
+        self.default_task_type = default_task_type
+        self.default_output_dimensionality = default_output_dimensionality
+
+        if self.provider == "gemini":
+            self.api_key = api_key or os.getenv("GEMINI_API_KEY") or settings.GEMINI_API_KEY
+            self._init_gemini()
+        elif self.provider == "local":
+            self.api_key = None
+            self._init_local()
+        else:
+            raise ValueError(f"Unsupported embedding provider: {self.provider}")
+
+        logger.info(
+            "Embedder initialized with provider=%s model=%s model_path=%s",
+            self.provider,
+            self.model,
+            self.model_path,
+        )
+
+    def _init_gemini(self) -> None:
+        """Initialize Gemini embedding client."""
+        if not GEMINI_EMBEDDINGS_AVAILABLE:
+            raise ImportError(
+                "google-genai is not installed. Install with: pip install google-genai"
+            )
         if not self.api_key:
             raise ValueError(
                 "GEMINI_API_KEY must be provided either as parameter or environment variable"
             )
-        
-        self.model = model
-        self.default_task_type = default_task_type
-        self.default_output_dimensionality = default_output_dimensionality
-        
         self.client = genai.Client(api_key=self.api_key)
-        
-        logger.info(f"Embedder initialized with model: {model}")
+        self.llama = None
+
+    def _init_local(self) -> None:
+        """Initialize local llama.cpp embedding client."""
+        if not LLAMA_CPP_AVAILABLE:
+            raise ImportError(
+                "llama-cpp-python is not installed. Install with: pip install llama-cpp-python"
+            )
+        if not self.model_path:
+            raise ValueError(
+                "EMBEDDING_MODEL_PATH must be set when EMBEDDING_PROVIDER=local"
+            )
+        model_path = Path(self.model_path)
+        if not model_path.exists():
+            raise FileNotFoundError(f"Embedding model file not found: {model_path}")
+
+        self.llama = Llama(
+            model_path=str(model_path),
+            embedding=True,
+            n_ctx=self.n_ctx,
+            n_threads=self.n_threads,
+            n_gpu_layers=self.n_gpu_layers,
+            verbose=self.verbose,
+        )
+        self.client = None
+
+    def _embed_local_texts(
+        self,
+        texts: List[str],
+        output_dimensionality: Optional[int] = None,
+    ) -> List[List[float]]:
+        """
+        Generate embeddings with the local llama.cpp model.
+
+        Uses one text at a time to avoid decode failures on multi-input batches
+        that some GGUF embedding models exhibit.
+        """
+        embeddings: List[List[float]] = []
+
+        for text in texts:
+            raw_embedding = self.llama.embed(text, normalize=False, truncate=True)
+
+            # llama_cpp may return either a single vector or a list containing one vector.
+            if raw_embedding and isinstance(raw_embedding[0], (list, tuple)):
+                vector = list(raw_embedding[0])
+            else:
+                vector = list(raw_embedding)
+
+            if output_dimensionality:
+                vector = vector[:output_dimensionality]
+
+            embeddings.append(vector)
+
+        return embeddings
     
     def embed(
         self,
@@ -84,29 +190,41 @@ class Embedder:
         
         if not texts:
             raise ValueError("At least one text is required")
+
+        output_dimensionality = output_dimensionality or self.default_output_dimensionality
         
         if config:
-            embed_config = config.to_embed_config()
             task_type = config.task_type
+            embed_config = config.to_embed_config() if self.provider == "gemini" else None
         else:
             task_type = task_type or self.default_task_type
-            output_dimensionality = output_dimensionality or self.default_output_dimensionality
-            
-            config_dict = {"task_type": task_type.value}
-            if output_dimensionality:
-                config_dict["output_dimensionality"] = output_dimensionality
-            embed_config = types.EmbedContentConfig(**config_dict)
+            embed_config = None
+            if self.provider == "gemini":
+                config_dict = {"task_type": task_type.value}
+                if output_dimensionality:
+                    config_dict["output_dimensionality"] = output_dimensionality
+                embed_config = types.EmbedContentConfig(**config_dict)
         
         try:
-            logger.debug(f"Generating embeddings for {len(texts)} text(s) with task_type: {task_type.value}")
-            
-            response = self.client.models.embed_content(
-                model=self.model,
-                contents=texts,
-                config=embed_config
+            logger.debug(
+                "Generating embeddings for %d text(s) with provider=%s task_type=%s",
+                len(texts),
+                self.provider,
+                task_type.value,
             )
-            
-            embeddings = [list(embedding.values) for embedding in response.embeddings]
+
+            if self.provider == "gemini":
+                response = self.client.models.embed_content(
+                    model=self.model,
+                    contents=texts,
+                    config=embed_config
+                )
+                embeddings = [list(embedding.values) for embedding in response.embeddings]
+            else:
+                embeddings = self._embed_local_texts(
+                    texts=texts,
+                    output_dimensionality=output_dimensionality,
+                )
             
             logger.debug(f"Generated embeddings with dimension: {len(embeddings[0]) if embeddings else 0}")
             
@@ -203,7 +321,7 @@ class Embedder:
 
 
 class LangChainGeminiEmbeddings(LangChainEmbeddings):
-    """LangChain-compatible embedding wrapper for Gemini embeddings."""
+    """LangChain-compatible embedding wrapper for project embedder."""
     
     def __init__(
         self,
@@ -236,7 +354,7 @@ class LangChainGeminiEmbeddings(LangChainEmbeddings):
         self.task_type_for_documents = task_type_for_documents
         self.task_type_for_queries = task_type_for_queries
         
-        logger.info("LangChainGeminiEmbeddings initialized")
+        logger.info("LangChain project embeddings initialized")
     
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """

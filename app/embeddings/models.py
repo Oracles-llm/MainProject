@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 
 class EmbeddingTaskType(str, Enum):
-    """Embedding task types for Gemini model."""
+    """Embedding task types used by the embedding layer."""
     
     SEMANTIC_SIMILARITY = "SEMANTIC_SIMILARITY"
     CLASSIFICATION = "CLASSIFICATION"

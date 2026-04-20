@@ -10,3 +10,4 @@ __pycache__
 .cursor
 logs/
 models/
+desktop-ui/build/

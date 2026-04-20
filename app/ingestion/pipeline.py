@@ -24,7 +24,7 @@ from app.db.models import VectorPoint
 from app.embeddings.embedder import get_langchain_embeddings
 from app.ingestion.loaders import load_text_documents
 from app.ingestion.chunker import chunk_documents
-from app.retrieval.sparse_vectors import SparseVectorGenerator
+from app.retrieval import get_sparse_vector_generator
 
 try:
 	from langchain_core.embeddings import Embeddings as LCEmbeddings
@@ -47,6 +47,7 @@ class IngestionConfig:
 	chunk_size: int = DEFAULT_CHUNK_SIZE
 	chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
 	enable_sparse_vectors: bool = True
+	recreate_collection: bool = False
 
 
 class IngestionPipeline:
@@ -59,7 +60,13 @@ class IngestionPipeline:
 	) -> None:
 		self.config = config or IngestionConfig()
 		self.embeddings: LCEmbeddings = embeddings or get_langchain_embeddings()
-		self._sparse_gen = SparseVectorGenerator(model_name="Qdrant/bm25")
+		self._sparse_gen = get_sparse_vector_generator(model_name="Qdrant/bm25")
+
+		if self._sparse_gen is None:
+			self.config.enable_sparse_vectors = False
+			logger.warning(
+				"fastembed is unavailable. Ingestion will continue with dense-only vectors."
+			)
 
 	def _ensure_collection(self, qdrant: QdrantDB) -> None:
 		"""Ensure the target Qdrant collection exists with correct settings."""
@@ -75,6 +82,7 @@ class IngestionPipeline:
 			collection_name=self.config.collection_name,
 			vector_size=settings.EMBEDDING_DIMENSION,
 			enable_sparse_vectors=self.config.enable_sparse_vectors,
+			recreate_on_dimension_mismatch=self.config.recreate_collection,
 		)
 
 	def _build_payload(self, doc: Document, chunk_index: int) -> Dict[str, Any]:
@@ -124,13 +132,17 @@ class IngestionPipeline:
 				f"Mismatch: {len(dense_vectors)} embeddings for {len(chunks)} chunks"
 			)
 
-		logger.info("Generating sparse BM25 embeddings for %d chunks", len(chunks))
-		sparse_vectors = self._sparse_gen.embed_documents(texts)
+		sparse_vectors = [None] * len(chunks)
+		if self._sparse_gen and self.config.enable_sparse_vectors:
+			logger.info("Generating sparse BM25 embeddings for %d chunks", len(chunks))
+			sparse_vectors = self._sparse_gen.embed_documents(texts)
 
-		if len(sparse_vectors) != len(chunks):
-			raise ValueError(
-				f"Mismatch: {len(sparse_vectors)} sparse embeddings for {len(chunks)} chunks"
-			)
+			if len(sparse_vectors) != len(chunks):
+				raise ValueError(
+					f"Mismatch: {len(sparse_vectors)} sparse embeddings for {len(chunks)} chunks"
+				)
+		else:
+			logger.info("Skipping sparse BM25 embeddings; dense-only ingestion is active")
 
 		# 4. Initialize Qdrant, ensure collection, and upsert points
 		with QdrantDB() as qdrant:
