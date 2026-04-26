@@ -146,11 +146,22 @@ class RAGService:
             
             if not retrieved_docs:
                 logger.warning(f"No documents retrieved for query: {query}")
+                fallback_answer = self.llm_client.chat(
+                    user_query=query,
+                    chat_history=chat_history,
+                    system_prompt=system_prompt
+                )
                 return RAGResponse(
-                    answer="I couldn't find any relevant information to answer your question.",
+                    answer=fallback_answer,
                     query=query,
                     retrieved_documents=[],
-                    metadata={"retrieval_count": 0}
+                    metadata={
+                        "retrieval_count": 0,
+                        "used_count": 0,
+                        "reranked": False,
+                        "rerank_strategy": None,
+                        "fallback_to_chat": True
+                    }
                 )
             
             reranked_docs = None
@@ -274,7 +285,12 @@ class RAGService:
             )
             
             if not retrieved_docs:
-                yield "I couldn't find any relevant information to answer your question."
+                fallback_answer = self.llm_client.chat(
+                    user_query=query,
+                    chat_history=chat_history,
+                    system_prompt=system_prompt
+                )
+                yield fallback_answer
                 return
             
             used_docs = retrieved_docs

@@ -26,6 +26,13 @@ except ImportError:
     LLAMA_CPP_AVAILABLE = False
 
 try:
+    from fastembed import TextEmbedding
+    FASTEMBED_AVAILABLE = True
+except ImportError:
+    TextEmbedding = None
+    FASTEMBED_AVAILABLE = False
+
+try:
     from langchain_core.embeddings import Embeddings as LangChainEmbeddings
     LANGCHAIN_AVAILABLE = True
 except ImportError:
@@ -56,6 +63,8 @@ class Embedder:
         n_threads: Optional[int] = None,
         n_gpu_layers: Optional[int] = None,
         verbose: Optional[bool] = None,
+        cache_dir: Optional[str] = None,
+        use_cuda: Optional[bool] = None,
         default_task_type: EmbeddingTaskType = EmbeddingTaskType.RETRIEVAL_DOCUMENT,
         default_output_dimensionality: Optional[int] = None
     ):
@@ -65,12 +74,14 @@ class Embedder:
         Args:
             api_key: Gemini API key (defaults to GEMINI_API_KEY env var)
             model: Embedding model name
-            provider: Embedding provider ("gemini" or "local")
+            provider: Embedding provider ("gemini", "fastembed", or "local")
             model_path: Local GGUF path for llama.cpp embedding models
             n_ctx: Context window for local embedding model
             n_threads: CPU threads for local embedding model
             n_gpu_layers: GPU offload layers for local embedding model
             verbose: Enable verbose local model logging
+            cache_dir: Optional fastembed cache directory
+            use_cuda: Whether fastembed should use CUDA providers
             default_task_type: Default task type for embeddings
             default_output_dimensionality: Default output dimension (128-3072, recommended: 768)
         """
@@ -81,12 +92,17 @@ class Embedder:
         self.n_threads = n_threads if n_threads is not None else settings.EMBEDDING_N_THREADS
         self.n_gpu_layers = n_gpu_layers if n_gpu_layers is not None else settings.EMBEDDING_N_GPU_LAYERS
         self.verbose = verbose if verbose is not None else settings.EMBEDDING_VERBOSE
+        self.cache_dir = cache_dir or settings.EMBEDDING_CACHE_DIR
+        self.use_cuda = use_cuda if use_cuda is not None else settings.EMBEDDING_USE_CUDA
         self.default_task_type = default_task_type
         self.default_output_dimensionality = default_output_dimensionality
 
         if self.provider == "gemini":
             self.api_key = api_key or os.getenv("GEMINI_API_KEY") or settings.GEMINI_API_KEY
             self._init_gemini()
+        elif self.provider == "fastembed":
+            self.api_key = None
+            self._init_fastembed()
         elif self.provider == "local":
             self.api_key = None
             self._init_local()
@@ -136,6 +152,26 @@ class Embedder:
             verbose=self.verbose,
         )
         self.client = None
+        self.fastembed = None
+
+    def _init_fastembed(self) -> None:
+        """Initialize local fastembed dense embedding client."""
+        if not FASTEMBED_AVAILABLE:
+            raise ImportError(
+                "fastembed is not installed. Install with: pip install fastembed"
+            )
+
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if self.use_cuda else None
+        self.fastembed = TextEmbedding(
+            model_name=self.model,
+            cache_dir=self.cache_dir,
+            threads=self.n_threads,
+            providers=providers,
+            cuda=self.use_cuda,
+            lazy_load=False,
+        )
+        self.client = None
+        self.llama = None
 
     def _embed_local_texts(
         self,
@@ -220,6 +256,15 @@ class Embedder:
                     config=embed_config
                 )
                 embeddings = [list(embedding.values) for embedding in response.embeddings]
+            elif self.provider == "fastembed":
+                if task_type == EmbeddingTaskType.RETRIEVAL_QUERY:
+                    raw_embeddings = list(self.fastembed.query_embed(texts))
+                else:
+                    raw_embeddings = list(self.fastembed.passage_embed(texts))
+
+                embeddings = [list(embedding.tolist()) for embedding in raw_embeddings]
+                if output_dimensionality:
+                    embeddings = [embedding[:output_dimensionality] for embedding in embeddings]
             else:
                 embeddings = self._embed_local_texts(
                     texts=texts,
@@ -368,8 +413,7 @@ class LangChainGeminiEmbeddings(LangChainEmbeddings):
         """
         if not texts:
             return []
-        # The Gemini API limits batch size to 100 items per request.
-        # Use the embedder's batching helper to stay within that limit.
+        # Reuse the embedder batching helper for provider-specific batching behavior.
         result = self._embedder.embed_batch(
             texts=texts,
             task_type=self.task_type_for_documents,

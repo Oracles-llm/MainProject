@@ -28,33 +28,32 @@ Requirements:
 
 After this integration, you can ignore `llmUi` for normal app usage.
 
-## Local Embedding Model
+## Local Dense Embeddings
 
-`MainProject` can run with a local GGUF embedding model through `llama-cpp-python`.
+`MainProject` can run with local dense embeddings through `fastembed`, which avoids the failing Qwen3 GGUF embedding load path.
 
-Recommended configuration for `Qwen3-Embedding-0.6B`:
+Recommended configuration:
 
 ```env
-EMBEDDING_PROVIDER=local
-EMBEDDING_MODEL=Qwen3-Embedding-0.6B
-EMBEDDING_MODEL_PATH=./models/Qwen3-Embedding-0.6B.gguf
-EMBEDDING_DIMENSION=1024
-EMBEDDING_N_CTX=8192
-EMBEDDING_N_GPU_LAYERS=0
-EMBEDDING_VERBOSE=false
+EMBEDDING_PROVIDER=fastembed
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+EMBEDDING_DIMENSION=384
+EMBEDDING_USE_CUDA=false
 ```
 
 Important:
 
-- Put the GGUF file under `MainProject/models/`
-- If your collection was created with the old embedding size, re-create or re-ingest it after switching to `1024`
-- `Qwen3-Embedding-0.6B` replaces the online Gemini embedding dependency for retrieval and ingestion
+- `fastembed` downloads and caches the dense model on first use
+- If your collection was created with a different embedding size, re-create or re-ingest it after switching providers
+- If you want to try ONNX/CUDA later, set `EMBEDDING_USE_CUDA=true`
 
-If you already have a `768`-dim Qdrant collection from the old embedding model, rebuild it with:
+If you already have a collection from the old embedding model, rebuild it with a folder that actually contains your source `.txt` files:
 
 ```bash
-python scripts/ingest_data.py --folder data --recreate-collection
+python scripts/ingest_data.py --folder path/to/your-txt-docs --recreate-collection
 ```
+
+If you only need to reset the collection schema and do not have any docs yet, the same command will now recreate the collection even when the folder is empty.
 
 Or if you use the bundled sample docs:
 

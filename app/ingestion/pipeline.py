@@ -106,48 +106,50 @@ class IngestionPipeline:
 		base_path = Path(folder_path).expanduser().resolve()
 		logger.info("Starting ingestion pipeline for folder: %s", base_path)
 
-		# 1. Load documents
-		docs = load_text_documents(str(base_path), glob=self.config.file_glob)
-		if not docs:
-			logger.warning("No documents found to ingest in %s", base_path)
-			return 0
-
-		# 2. Chunk documents
-		chunks = chunk_documents(
-			documents=docs,
-			chunk_size=self.config.chunk_size,
-			chunk_overlap=self.config.chunk_overlap,
-		)
-		if not chunks:
-			logger.warning("No chunks produced from documents in %s", base_path)
-			return 0
-
-		# 3. Generate dense and sparse vectors
-		logger.info("Generating dense embeddings for %d chunks using LangChain", len(chunks))
-		texts = [c.page_content for c in chunks]
-		dense_vectors = self.embeddings.embed_documents(texts)
-
-		if len(dense_vectors) != len(chunks):
-			raise ValueError(
-				f"Mismatch: {len(dense_vectors)} embeddings for {len(chunks)} chunks"
-			)
-
-		sparse_vectors = [None] * len(chunks)
-		if self._sparse_gen and self.config.enable_sparse_vectors:
-			logger.info("Generating sparse BM25 embeddings for %d chunks", len(chunks))
-			sparse_vectors = self._sparse_gen.embed_documents(texts)
-
-			if len(sparse_vectors) != len(chunks):
-				raise ValueError(
-					f"Mismatch: {len(sparse_vectors)} sparse embeddings for {len(chunks)} chunks"
-				)
-		else:
-			logger.info("Skipping sparse BM25 embeddings; dense-only ingestion is active")
-
-		# 4. Initialize Qdrant, ensure collection, and upsert points
 		with QdrantDB() as qdrant:
+			# Reset or create the collection before loading documents so
+			# --recreate-collection also fixes stale schemas in empty folders.
 			self._ensure_collection(qdrant)
 
+			# 1. Load documents
+			docs = load_text_documents(str(base_path), glob=self.config.file_glob)
+			if not docs:
+				logger.warning("No documents found to ingest in %s", base_path)
+				return 0
+
+			# 2. Chunk documents
+			chunks = chunk_documents(
+				documents=docs,
+				chunk_size=self.config.chunk_size,
+				chunk_overlap=self.config.chunk_overlap,
+			)
+			if not chunks:
+				logger.warning("No chunks produced from documents in %s", base_path)
+				return 0
+
+			# 3. Generate dense and sparse vectors
+			logger.info("Generating dense embeddings for %d chunks using LangChain", len(chunks))
+			texts = [c.page_content for c in chunks]
+			dense_vectors = self.embeddings.embed_documents(texts)
+
+			if len(dense_vectors) != len(chunks):
+				raise ValueError(
+					f"Mismatch: {len(dense_vectors)} embeddings for {len(chunks)} chunks"
+				)
+
+			sparse_vectors = [None] * len(chunks)
+			if self._sparse_gen and self.config.enable_sparse_vectors:
+				logger.info("Generating sparse BM25 embeddings for %d chunks", len(chunks))
+				sparse_vectors = self._sparse_gen.embed_documents(texts)
+
+				if len(sparse_vectors) != len(chunks):
+					raise ValueError(
+						f"Mismatch: {len(sparse_vectors)} sparse embeddings for {len(chunks)} chunks"
+					)
+			else:
+				logger.info("Skipping sparse BM25 embeddings; dense-only ingestion is active")
+
+			# 4. Upsert points
 			logger.info(
 				"Upserting %d dense + sparse points into Qdrant collection '%s'",
 				len(chunks),

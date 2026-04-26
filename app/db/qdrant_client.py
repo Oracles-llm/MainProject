@@ -5,6 +5,8 @@ Handles connection, collection management, and vector operations.
 
 from pathlib import Path
 import shutil
+import gc
+import time
 from typing import List, Optional, Dict, Any
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -121,8 +123,23 @@ class QdrantDB:
             raise RuntimeError(f"Refusing to delete collection path outside local root: {collection_dir}")
 
         if collection_dir.exists():
-            shutil.rmtree(collection_dir)
-            logger.info(f"Purged local Qdrant collection directory: {collection_dir}")
+            last_error = None
+            for attempt in range(5):
+                try:
+                    shutil.rmtree(collection_dir)
+                    logger.info(f"Purged local Qdrant collection directory: {collection_dir}")
+                    return
+                except PermissionError as e:
+                    last_error = e
+                    logger.warning(
+                        "Local Qdrant collection directory is still locked on attempt %d/5: %s",
+                        attempt + 1,
+                        e,
+                    )
+                    gc.collect()
+                    time.sleep(0.5)
+
+            raise last_error
     
     @property
     def client(self) -> QdrantClient:
@@ -247,6 +264,8 @@ class QdrantDB:
                 # Reconnect after deletion so local in-memory handles do not keep
                 # referencing the stale sqlite-backed collection layout.
                 self.close()
+                gc.collect()
+                time.sleep(0.5)
                 self._purge_local_collection_dir(collection_name)
                 self._connect()
 
