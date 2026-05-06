@@ -6,6 +6,29 @@ Start only the API server:
 python main.py
 ```
 
+## Running The Node UI
+
+The React/TanStack UI from `ai-chat-companion` is now copied into this project at `MainProject/ai-chat-companion`.
+During development, run the backend and UI separately:
+
+```bash
+python main.py
+cd ai-chat-companion
+npm install
+npm run dev
+```
+
+The UI sends chat requests to `http://127.0.0.1:8000/api/v1/chat` by default. To point it at a different backend:
+
+```bash
+$env:VITE_API_BASE_URL="http://127.0.0.1:8010"
+npm run dev
+```
+
+Chat history is saved locally in the user's browser/Electron storage under the `oracles.chat.history.v1` key, so previous chats remain on the same device.
+
+For a final Windows installer, package this UI inside Electron or Tauri and have that desktop shell start the packaged Python backend as a child process. That gives users a normal `.exe` without requiring them to manually open a web browser.
+
 ## Running The Desktop App
 
 `MainProject` now includes a bundled Java desktop client that replaces the separate `llmUi` repo workflow. This starts the FastAPI backend, waits for it to become healthy, compiles the Java UI with `javac`, and opens the desktop chat window:

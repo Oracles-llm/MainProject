@@ -9,5 +9,6 @@ __pycache__
 .vscode
 .cursor
 logs/
+*.log
 models/
 desktop-ui/build/
