@@ -1,14 +1,17 @@
 """
-Main entry point for the FastAPI application and desktop launcher.
+Main entry point for the FastAPI application and React UI launcher.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import shutil
+import socket
 import subprocess
 import sys
 import time
+import webbrowser
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -16,46 +19,48 @@ from urllib.request import urlopen
 import uvicorn
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-JAVA_MAIN_CLASS = "com.oracles.desktop.OraclesDesktop"
+AI_CHAT_COMPANION_DIR = PROJECT_ROOT / "ai-chat-companion"
 
 
-def compile_desktop_ui() -> Path:
-    """Compile the Java desktop UI into the local build directory."""
-    source_dir = PROJECT_ROOT / "desktop-ui" / "src"
-    build_dir = PROJECT_ROOT / "desktop-ui" / "build" / "classes"
-    java_files = sorted(source_dir.rglob("*.java"))
+def find_available_port(host: str, preferred_port: int) -> int:
+    """Find an available TCP port, starting with the preferred port."""
+    bind_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
 
-    if not java_files:
-        raise FileNotFoundError(f"No Java UI sources found in {source_dir}")
+    for port in range(preferred_port, preferred_port + 100):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind((bind_host, port))
+            except OSError:
+                continue
+            return port
 
-    build_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        ["javac", "-d", str(build_dir), *[str(path) for path in java_files]],
-        cwd=PROJECT_ROOT,
-        check=True,
-    )
-    return build_dir
+    raise RuntimeError(f"No available UI port found from {preferred_port} to {preferred_port + 99}")
 
 
-def wait_for_backend(api_base_url: str, timeout_seconds: int = 180) -> None:
-    """Wait until the backend health check responds successfully."""
+def wait_for_url(url: str, timeout_seconds: int = 180) -> None:
+    """Wait until a URL responds successfully."""
     deadline = time.time() + timeout_seconds
-    health_url = f"{api_base_url}/api/v1/health"
-    last_error = "backend did not become ready"
+    last_error = "URL did not become ready"
 
     while time.time() < deadline:
         try:
-            with urlopen(health_url, timeout=5) as response:
+            with urlopen(url, timeout=5) as response:
                 if 200 <= response.status < 300:
                     return
-                last_error = f"health check returned HTTP {response.status}"
+                last_error = f"request returned HTTP {response.status}"
         except URLError as error:
             last_error = str(error)
         except Exception as error:  # pragma: no cover - defensive startup path
             last_error = str(error)
         time.sleep(1)
 
-    raise RuntimeError(f"Timed out waiting for backend at {health_url}: {last_error}")
+    raise RuntimeError(f"Timed out waiting for {url}: {last_error}")
+
+
+def wait_for_backend(api_base_url: str, timeout_seconds: int = 180) -> None:
+    """Wait until the backend health check responds successfully."""
+    wait_for_url(f"{api_base_url}/api/v1/health", timeout_seconds=timeout_seconds)
 
 
 def start_backend(host: str, port: int, disable_rag: bool) -> subprocess.Popen[str]:
@@ -82,8 +87,8 @@ def start_backend(host: str, port: int, disable_rag: bool) -> subprocess.Popen[s
     return subprocess.Popen(command, cwd=PROJECT_ROOT, env=env)
 
 
-def stop_backend(process: subprocess.Popen[str] | None) -> None:
-    """Stop the backend subprocess if it is still running."""
+def stop_process(process: subprocess.Popen[str] | None) -> None:
+    """Stop a subprocess if it is still running."""
     if process is None or process.poll() is not None:
         return
 
@@ -95,24 +100,87 @@ def stop_backend(process: subprocess.Popen[str] | None) -> None:
         process.wait(timeout=5)
 
 
-def launch_desktop_mode(host: str, port: int, disable_rag: bool) -> None:
-    """Compile and launch the bundled Java desktop UI with the API server."""
+def ensure_ai_chat_companion_dependencies() -> None:
+    """Install UI dependencies on first run if node_modules is missing."""
+    if not AI_CHAT_COMPANION_DIR.is_dir():
+        raise FileNotFoundError(f"AI chat UI directory not found: {AI_CHAT_COMPANION_DIR}")
+
+    if (AI_CHAT_COMPANION_DIR / "node_modules").is_dir():
+        return
+
+    npm_executable = get_npm_executable()
+    print("Installing ai-chat-companion dependencies with npm install...")
+    subprocess.run([npm_executable, "install"], cwd=AI_CHAT_COMPANION_DIR, check=True)
+
+
+def get_npm_executable() -> str:
+    """Return the npm executable path for the current platform."""
+    executable = shutil.which("npm.cmd" if os.name == "nt" else "npm") or shutil.which("npm")
+    if executable is None:
+        raise RuntimeError("npm was not found on PATH. Install Node.js before launching the UI.")
+    return executable
+
+
+def start_ai_chat_companion(
+    api_base_url: str,
+    ui_host: str,
+    ui_port: int,
+) -> subprocess.Popen[str]:
+    """Start the React UI dev server."""
+    npm_executable = get_npm_executable()
+    env = os.environ.copy()
+    env["VITE_API_BASE_URL"] = api_base_url
+
+    command = [
+        npm_executable,
+        "run",
+        "dev",
+        "--",
+        "--host",
+        ui_host,
+        "--port",
+        str(ui_port),
+        "--strictPort",
+    ]
+
+    return subprocess.Popen(command, cwd=AI_CHAT_COMPANION_DIR, env=env)
+
+
+def launch_ai_chat_companion(
+    host: str,
+    port: int,
+    disable_rag: bool,
+    ui_host: str,
+    ui_port: int,
+) -> None:
+    """Launch the FastAPI backend and React UI together."""
     api_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     api_base_url = f"http://{api_host}:{port}"
+    resolved_ui_port = find_available_port(ui_host, ui_port)
+    browser_ui_host = "127.0.0.1" if ui_host in {"0.0.0.0", "::"} else ui_host
+    ui_base_url = f"http://{browser_ui_host}:{resolved_ui_port}"
 
-    build_dir = compile_desktop_ui()
     backend_process = None
+    ui_process = None
 
     try:
+        ensure_ai_chat_companion_dependencies()
         backend_process = start_backend(host=host, port=port, disable_rag=disable_rag)
         wait_for_backend(api_base_url)
-        subprocess.run(
-            ["java", "-cp", str(build_dir), JAVA_MAIN_CLASS, api_base_url],
-            cwd=PROJECT_ROOT,
-            check=True,
+        ui_process = start_ai_chat_companion(
+            api_base_url=api_base_url,
+            ui_host=ui_host,
+            ui_port=resolved_ui_port,
         )
+        wait_for_url(ui_base_url, timeout_seconds=60)
+        print(f"Opening AI Chat Companion at {ui_base_url}")
+        webbrowser.open(ui_base_url)
+        ui_process.wait()
+    except KeyboardInterrupt:
+        print("Stopping AI Chat Companion...")
     finally:
-        stop_backend(backend_process)
+        stop_process(ui_process)
+        stop_process(backend_process)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -125,9 +193,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable the RAG pipeline and send queries directly to the LLM.",
     )
     parser.add_argument(
-        "--desktop-ui",
+        "--ai-chat-companion",
         action="store_true",
-        help="Launch the bundled Java desktop UI and the API backend together.",
+        help="Launch the React AI chat UI and the API backend together.",
     )
     parser.add_argument(
         "--host",
@@ -140,6 +208,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=8000,
         help="API port. Defaults to 8000.",
     )
+    parser.add_argument(
+        "--ui-host",
+        default="127.0.0.1",
+        help="AI chat UI host binding. Defaults to 127.0.0.1.",
+    )
+    parser.add_argument(
+        "--ui-port",
+        type=int,
+        default=5173,
+        help="AI chat UI port. Defaults to 5173, or the next available port.",
+    )
     return parser
 
 
@@ -151,8 +230,14 @@ if __name__ == "__main__":
 
     from app.core.config import settings
 
-    if args.desktop_ui:
-        launch_desktop_mode(host=args.host, port=args.port, disable_rag=args.disable_rag)
+    if args.ai_chat_companion:
+        launch_ai_chat_companion(
+            host=args.host,
+            port=args.port,
+            disable_rag=args.disable_rag,
+            ui_host=args.ui_host,
+            ui_port=args.ui_port,
+        )
     else:
         uvicorn.run(
             "app.api.main:app",

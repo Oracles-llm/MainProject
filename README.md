@@ -6,10 +6,27 @@ Start only the API server:
 python main.py
 ```
 
-## Running The Node UI
+## Running The AI Chat Companion
 
 The React/TanStack UI from `ai-chat-companion` is now copied into this project at `MainProject/ai-chat-companion`.
-During development, run the backend and UI separately:
+
+Start the backend and UI together:
+
+```bash
+python main.py --ai-chat-companion
+```
+
+This starts FastAPI, starts the Vite UI server, waits for both to be ready, and opens the UI in your default browser.
+
+Useful variants:
+
+```bash
+python main.py --ai-chat-companion --disable-rag
+python main.py --ai-chat-companion --host 127.0.0.1 --port 8010
+python main.py --ai-chat-companion --ui-port 5174
+```
+
+You can also run the backend and UI separately during development:
 
 ```bash
 python main.py
@@ -29,25 +46,10 @@ Chat history is saved locally in the user's browser/Electron storage under the `
 
 For a final Windows installer, package this UI inside Electron or Tauri and have that desktop shell start the packaged Python backend as a child process. That gives users a normal `.exe` without requiring them to manually open a web browser.
 
-## Running The Desktop App
-
-`MainProject` now includes a bundled Java desktop client that replaces the separate `llmUi` repo workflow. This starts the FastAPI backend, waits for it to become healthy, compiles the Java UI with `javac`, and opens the desktop chat window:
-
-```bash
-python main.py --desktop-ui
-```
-
-Useful variants:
-
-```bash
-python main.py --desktop-ui --disable-rag
-python main.py --desktop-ui --host 127.0.0.1 --port 8010
-```
-
 Requirements:
 
 - Python environment for `MainProject`
-- Java/JDK available on `PATH` (`java` and `javac`)
+- Node.js/npm available on `PATH`
 
 After this integration, you can ignore `llmUi` for normal app usage.
 
