@@ -183,6 +183,18 @@ def launch_ai_chat_companion(
         stop_process(backend_process)
 
 
+def launch_ai_chat_companion_desktop(disable_rag: bool) -> None:
+    """Launch the Electron desktop UI, which starts the backend itself."""
+    ensure_ai_chat_companion_dependencies()
+    npm_executable = get_npm_executable()
+    env = os.environ.copy()
+
+    if disable_rag:
+        env["DISABLE_RAG"] = "true"
+
+    subprocess.run([npm_executable, "run", "desktop"], cwd=AI_CHAT_COMPANION_DIR, env=env, check=True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the command line argument parser."""
     parser = argparse.ArgumentParser(description="Run the LLM API server.")
@@ -195,7 +207,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ai-chat-companion",
         action="store_true",
-        help="Launch the React AI chat UI and the API backend together.",
+        help="Launch the Electron AI chat desktop app and the API backend together.",
+    )
+    parser.add_argument(
+        "--web-chat-companion",
+        action="store_true",
+        help="Launch the React AI chat UI in the default browser with the API backend.",
     )
     parser.add_argument(
         "--host",
@@ -228,9 +245,11 @@ if __name__ == "__main__":
     if args.disable_rag:
         os.environ["DISABLE_RAG"] = "true"
 
-    from app.core.config import settings
+    from app.core.config import logger, settings
 
     if args.ai_chat_companion:
+        launch_ai_chat_companion_desktop(disable_rag=args.disable_rag)
+    elif args.web_chat_companion:
         launch_ai_chat_companion(
             host=args.host,
             port=args.port,
@@ -239,10 +258,29 @@ if __name__ == "__main__":
             ui_port=args.ui_port,
         )
     else:
-        uvicorn.run(
-            "app.api.main:app",
-            host=args.host,
-            port=args.port,
-            reload=settings.DEBUG,
-            log_level=settings.LOG_LEVEL.lower(),
+        logger.info(
+            "Launching API server on %s:%s with debug=%s",
+            args.host,
+            args.port,
+            settings.DEBUG,
         )
+        if settings.DEBUG:
+            uvicorn.run(
+                "app.api.main:app",
+                host=args.host,
+                port=args.port,
+                reload=True,
+                log_level=settings.LOG_LEVEL.lower(),
+            )
+        else:
+            logger.info("Importing FastAPI app before Uvicorn startup")
+            from app.api.main import app as fastapi_app
+
+            logger.info("FastAPI app imported successfully")
+            uvicorn.run(
+                fastapi_app,
+                host=args.host,
+                port=args.port,
+                reload=False,
+                log_level=settings.LOG_LEVEL.lower(),
+            )

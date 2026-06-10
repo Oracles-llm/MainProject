@@ -83,6 +83,13 @@ class VectorRetriever:
         try:
             logger.debug(f"Retrieving documents for query: {query[:50]}...")
 
+            if not self.qdrant.collection_exists(self.collection_name):
+                logger.warning(
+                    "Collection '%s' does not exist; returning no retrieved documents",
+                    self.collection_name,
+                )
+                return []
+
             existing_size = self.qdrant.get_collection_vector_size(self.collection_name)
             if existing_size is not None and existing_size != settings.EMBEDDING_DIMENSION:
                 raise CollectionDimensionMismatchError(

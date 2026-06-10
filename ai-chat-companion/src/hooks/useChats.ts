@@ -14,8 +14,17 @@ export type Chat = {
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const STORAGE_KEY = "oracles.chat.history.v1";
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000";
+
+function getApiBaseUrl() {
+  if (typeof window !== "undefined") {
+    const apiBaseUrl = new URLSearchParams(window.location.search).get("apiBaseUrl");
+    if (apiBaseUrl) return apiBaseUrl.replace(/\/$/, "");
+  }
+
+  return import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000";
+}
+
+const API_BASE_URL = getApiBaseUrl();
 
 type PersistedChatState = {
   chats: Chat[];

@@ -1,12 +1,21 @@
 {
-  "name": "tanstack_start_ts",
+  "name": "oracles-ai-chat-companion",
+  "productName": "Oracles AI Chat Companion",
+  "version": "0.1.0",
+  "description": "Desktop UI for the local Oracles LLM backend.",
+  "author": "Oracles",
   "private": true,
+  "main": "electron/main.cjs",
   "sideEffects": false,
   "type": "module",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
     "build:dev": "vite build --mode development",
+    "desktop": "npm run build && electron .",
+    "pack:backend": "cd .. && python -m PyInstaller packaging/oracles-backend.spec --noconfirm --clean --distpath ai-chat-companion/backend-dist --workpath build/pyinstaller",
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "dist:win:full": "npm run build && npm run pack:backend && electron-builder --win nsis",
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write ."
@@ -73,6 +82,8 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.4",
+    "electron": "^42.0.0",
+    "electron-builder": "^26.8.1",
     "eslint": "^9.32.0",
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-prettier": "^5.2.6",
@@ -83,5 +94,37 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^7.3.1"
+  },
+  "build": {
+    "appId": "com.oracles.ai-chat-companion",
+    "productName": "Oracles AI Chat Companion",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend-dist/oracles-backend",
+        "to": "backend"
+      },
+      {
+        "from": "../models/qwen2.5-3b-instruct-q4_0.gguf",
+        "to": "models/qwen2.5-3b-instruct-q4_0.gguf"
+      }
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }
