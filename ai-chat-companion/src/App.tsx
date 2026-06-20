@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/chat/Sidebar";
 import { ChatView } from "@/components/chat/ChatView";
+import { DocumentPreparationView } from "@/components/documents/DocumentPreparationView";
 import { useChats } from "@/hooks/useChats";
+
+export type WorkspaceView = "chat" | "documents";
 
 export default function App() {
   const {
@@ -18,6 +21,7 @@ export default function App() {
 
   const [collapsed, setCollapsed] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [activeView, setActiveView] = useState<WorkspaceView>("chat");
 
   useEffect(() => {
     const root = document.documentElement;
@@ -30,20 +34,35 @@ export default function App() {
       <Sidebar
         chats={chats}
         activeId={activeId}
+        activeView={activeView}
         collapsed={collapsed}
         onToggleCollapsed={() => setCollapsed((value) => !value)}
-        onSelect={setActiveId}
-        onNew={newChat}
+        onSelect={(id) => {
+          setActiveView("chat");
+          setActiveId(id);
+        }}
+        onNew={() => {
+          setActiveView("chat");
+          newChat();
+        }}
         onRename={renameChat}
         onDelete={deleteChat}
+        onSelectDocuments={() => setActiveView("documents")}
       />
-      <ChatView
-        chat={activeChat}
-        onSend={sendMessage}
-        isSending={isSending}
-        theme={theme}
-        onToggleTheme={() => setTheme((value) => (value === "dark" ? "light" : "dark"))}
-      />
+      {activeView === "chat" ? (
+        <ChatView
+          chat={activeChat}
+          onSend={sendMessage}
+          isSending={isSending}
+          theme={theme}
+          onToggleTheme={() => setTheme((value) => (value === "dark" ? "light" : "dark"))}
+        />
+      ) : (
+        <DocumentPreparationView
+          theme={theme}
+          onToggleTheme={() => setTheme((value) => (value === "dark" ? "light" : "dark"))}
+        />
+      )}
     </div>
   );
 }

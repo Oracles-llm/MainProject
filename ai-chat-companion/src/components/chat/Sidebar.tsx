@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Plus,
   MessageSquare,
+  Files,
   Pencil,
   Trash2,
   PanelLeftClose,
@@ -12,27 +13,32 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import type { Chat } from "@/hooks/useChats";
+import type { WorkspaceView } from "@/App";
 
 type Props = {
   chats: Chat[];
   activeId: string | null;
+  activeView: WorkspaceView;
   collapsed: boolean;
   onToggleCollapsed: () => void;
   onSelect: (id: string) => void;
   onNew: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  onSelectDocuments: () => void;
 };
 
 export function Sidebar({
   chats,
   activeId,
+  activeView,
   collapsed,
   onToggleCollapsed,
   onSelect,
   onNew,
   onRename,
   onDelete,
+  onSelectDocuments,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -85,6 +91,21 @@ export function Sidebar({
         >
           <Plus className="h-4 w-4" />
           {!collapsed && <span className="text-sm font-medium">New chat</span>}
+        </Button>
+      </div>
+
+      <div className="px-2 pb-2">
+        <Button
+          onClick={onSelectDocuments}
+          className={cn(
+            "w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent",
+            activeView === "documents" && "bg-sidebar-accent text-sidebar-accent-foreground",
+            collapsed && "justify-center px-0",
+          )}
+          variant="ghost"
+        >
+          <Files className="h-4 w-4" />
+          {!collapsed && <span className="text-sm font-medium">Documents</span>}
         </Button>
       </div>
 
