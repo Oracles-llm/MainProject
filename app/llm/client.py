@@ -6,6 +6,7 @@ Supports both self-hosted llama.cpp and provider models (Gemini).
 from typing import List, Optional, Dict, Any, Tuple
 from pathlib import Path
 from enum import Enum
+import re
 
 from langchain_community.llms import LlamaCpp
 from langchain_core.language_models import BaseLanguageModel
@@ -23,10 +24,48 @@ from app.core.logging import get_logger
 from app.llm.prompts import (
     build_rag_prompt_string,
     build_chat_prompt_string,
-    format_context_documents
+    format_context_documents,
+    NO_CONTEXT_ANSWER
 )
 
 logger = get_logger(__name__)
+
+
+RAG_STOP_SEQUENCES = [
+    "\n\nUser:",
+    "\nUser:",
+    "User:",
+    "\n\nAssistant:",
+    "\nAssistant:",
+    "\n\nSystem:",
+    "\nSystem:",
+    "System:",
+]
+
+
+def clean_rag_answer(answer: str) -> str:
+    """Remove common local-model overgeneration after the first direct answer."""
+    cleaned = answer.strip()
+    if not cleaned:
+        return cleaned
+
+    if cleaned == NO_CONTEXT_ANSWER:
+        return cleaned
+
+    for marker in RAG_STOP_SEQUENCES:
+        marker_index = cleaned.find(marker.strip())
+        if marker_index > 0:
+            cleaned = cleaned[:marker_index].strip()
+
+    if NO_CONTEXT_ANSWER in cleaned and cleaned != NO_CONTEXT_ANSWER:
+        cleaned = cleaned.replace(NO_CONTEXT_ANSWER, "").strip()
+
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    if lines:
+        cleaned = lines[0]
+
+    cleaned = re.sub(r"^\s*\d+[\.\)]\s*", "", cleaned).strip()
+    return cleaned
 
 
 class LLMProvider(str, Enum):
@@ -240,6 +279,14 @@ class LLMClient:
                 chat_history=chat_history,
                 system_prompt=system_prompt
             )
+            response = self.generate(
+                prompt_str,
+                stop=RAG_STOP_SEQUENCES,
+                temperature=0.1,
+                top_p=0.7,
+                max_tokens=96,
+            )
+            return clean_rag_answer(response)
         else:
             prompt_str = build_chat_prompt_string(
                 user_query=user_query,

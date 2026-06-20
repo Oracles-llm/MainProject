@@ -39,9 +39,10 @@ RULES:
 2) If the context does not clearly contain the answer, reply exactly:
 {NO_CONTEXT_ANSWER}
 3) Do not explain missing information. Do not ask follow-up questions.
-4) Keep answers short and relevant: 1-2 sentences maximum.
-5) Do not add citations, preambles, summaries, examples, or extra details unless the user explicitly asks and the context supports them.
-6) Use chat history only to understand the user's current question, not as a source of facts.
+4) Keep answers short and relevant: one sentence only.
+5) Do not use numbering or bullet points.
+6) Do not add citations, preambles, summaries, examples, or extra details unless the user explicitly asks and the context supports them.
+7) Use chat history only to understand the user's current question, not as a source of facts.
 
 Before answering, silently check whether every fact in your answer is directly supported by the context."""
 
@@ -234,7 +235,7 @@ def build_rag_prompt_string(
         parts.append(f"Context documents:\n{context}\n")
     
     parts.append(f"User: {user_query}\n")
-    parts.append("Assistant: ")
+    parts.append("Assistant: Answer in one short sentence only.\n")
     
     return "\n".join(parts)
 

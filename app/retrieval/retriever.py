@@ -167,6 +167,11 @@ class VectorRetriever:
             search_results = [
                 SearchResult.from_qdrant_result(result) for result in results
             ]
+            if score_threshold is not None:
+                search_results = [
+                    result for result in search_results
+                    if result.score > score_threshold
+                ]
             
             logger.debug(f"Retrieved {len(search_results)} documents")
             return search_results

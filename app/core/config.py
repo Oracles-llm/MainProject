@@ -59,7 +59,7 @@ class Settings:
 
     DISABLE_RAG: bool = os.getenv("DISABLE_RAG", "False").lower() == "true"
     
-    HYBRID_SEARCH_SCORE_THRESHOLD: Optional[float] = float(os.getenv("HYBRID_SEARCH_SCORE_THRESHOLD")) if os.getenv("HYBRID_SEARCH_SCORE_THRESHOLD") else None
+    HYBRID_SEARCH_SCORE_THRESHOLD: Optional[float] = float(os.getenv("HYBRID_SEARCH_SCORE_THRESHOLD", "0.55"))
     RERANKER_TOP_K: int = int(os.getenv("RERANKER_TOP_K", "5"))
 
 
