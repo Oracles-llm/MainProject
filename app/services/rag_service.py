@@ -10,10 +10,30 @@ from enum import Enum
 from app.core.logging import get_logger
 from app.retrieval import VectorRetriever, get_retriever, get_reranker, BaseReranker
 from app.llm import LLMClient, get_llm_client
+from app.llm.prompts import NO_CONTEXT_ANSWER
 from app.db.models import SearchResult
 from app.retrieval.reranker import RerankResult
 
 logger = get_logger(__name__)
+
+
+GREETING_RESPONSE = "Hi, how can I help?"
+GREETING_QUERIES = {
+    "hi",
+    "hello",
+    "hey",
+    "hai",
+    "hii",
+    "good morning",
+    "good afternoon",
+    "good evening",
+}
+
+
+def is_simple_greeting(query: str) -> bool:
+    """Return True for short greetings that do not need document retrieval."""
+    normalized = query.strip().lower().strip("!.,? ")
+    return normalized in GREETING_QUERIES
 
 
 class RerankStrategy(str, Enum):
@@ -134,6 +154,20 @@ class RAGService:
         
         try:
             logger.debug(f"Processing RAG query: {query[:50]}...")
+
+            if is_simple_greeting(query):
+                return RAGResponse(
+                    answer=GREETING_RESPONSE,
+                    query=query,
+                    retrieved_documents=[],
+                    metadata={
+                        "retrieval_count": 0,
+                        "used_count": 0,
+                        "reranked": False,
+                        "rerank_strategy": None,
+                        "handled_as_greeting": True
+                    }
+                )
             
             retrieved_docs = self.retriever.retrieve(
                 query=query,
@@ -146,13 +180,8 @@ class RAGService:
             
             if not retrieved_docs:
                 logger.warning(f"No documents retrieved for query: {query}")
-                fallback_answer = self.llm_client.chat(
-                    user_query=query,
-                    chat_history=chat_history,
-                    system_prompt=system_prompt
-                )
                 return RAGResponse(
-                    answer=fallback_answer,
+                    answer=NO_CONTEXT_ANSWER,
                     query=query,
                     retrieved_documents=[],
                     metadata={
@@ -277,6 +306,10 @@ class RAGService:
         rerank_strategy = rerank_strategy or self.default_rerank_strategy
         
         try:
+            if is_simple_greeting(query):
+                yield GREETING_RESPONSE
+                return
+
             retrieved_docs = self.retriever.retrieve(
                 query=query,
                 k=k,
@@ -285,12 +318,7 @@ class RAGService:
             )
             
             if not retrieved_docs:
-                fallback_answer = self.llm_client.chat(
-                    user_query=query,
-                    chat_history=chat_history,
-                    system_prompt=system_prompt
-                )
-                yield fallback_answer
+                yield NO_CONTEXT_ANSWER
                 return
             
             used_docs = retrieved_docs

@@ -12,6 +12,9 @@ from langchain_core.prompts import (
 )
 
 
+NO_CONTEXT_ANSWER = "I dont have information to give answer"
+
+
 def get_system_prompt() -> str:
     """
     Backwards-compatible default system prompt.
@@ -28,20 +31,19 @@ def get_rag_system_prompt() -> str:
 
     Goal: maximize grounded, accurate answers with minimal hallucination.
     """
-    return """You are an accurate, no-hallucination assistant inside a Retrieval-Augmented Generation (RAG) system.
-You will receive "Context documents" that contain the ONLY authoritative information about the user's question.
+    return f"""You are a strict context-only question answering assistant.
+The context documents are the ONLY source you may use.
 
-RULES (RAG MODE):
-1) Use ONLY the provided context documents and the chat history. Do not invent facts. Do not rely on outside knowledge for factual claims.
-2) If the answer is not fully supported by the context, say: "The provided documents do not contain enough information to answer that." Then ask up to 2 targeted clarifying questions OR ask the user to provide the missing info.
-3) If context documents conflict, explicitly note the conflict and prefer the most specific/most recent statement if the documents indicate dates/versions; otherwise present both possibilities.
-4) Be concise and direct. Answer the user's exact question; avoid extra tangents.
-5) Add citations for key factual claims using the document tags exactly as shown (example: [Document 2]). Do not cite documents that do not support the claim.
+RULES:
+1) Answer only from the context documents. Do not use outside knowledge.
+2) If the context does not clearly contain the answer, reply exactly:
+{NO_CONTEXT_ANSWER}
+3) Do not explain missing information. Do not ask follow-up questions.
+4) Keep answers short and relevant: 1-2 sentences maximum.
+5) Do not add citations, preambles, summaries, examples, or extra details unless the user explicitly asks and the context supports them.
+6) Use chat history only to understand the user's current question, not as a source of facts.
 
-OUTPUT STYLE:
-- Start with a direct answer (1-3 sentences).
-- If helpful, add a short bullet list of essential details.
-- No filler. No hypothetical Q&A. No long preambles."""
+Before answering, silently check whether every fact in your answer is directly supported by the context."""
 
 
 def get_chat_system_prompt() -> str:
@@ -83,7 +85,9 @@ def create_rag_prompt_template(system_prompt: Optional[str] = None) -> ChatPromp
         MessagesPlaceholder(variable_name="chat_history"),
         HumanMessagePromptTemplate.from_template(
             "Context documents:\n{context}\n\n"
-            "Based on the context above, please answer the following question:\n{user_query}"
+            "Question:\n{user_query}\n\n"
+            "Answer using only the context. If the answer is not in the context, reply exactly:\n"
+            + NO_CONTEXT_ANSWER
         )
     ])
     
@@ -129,7 +133,9 @@ def create_context_only_prompt_template(system_prompt: Optional[str] = None) -> 
         SystemMessagePromptTemplate.from_template(system_prompt),
         HumanMessagePromptTemplate.from_template(
             "Context documents:\n{context}\n\n"
-            "Based on the context above, please answer the following question:\n{user_query}"
+            "Question:\n{user_query}\n\n"
+            "Answer using only the context. If the answer is not in the context, reply exactly:\n"
+            + NO_CONTEXT_ANSWER
         )
     ])
     
@@ -188,7 +194,7 @@ def format_context_documents(documents: List[str]) -> str:
         Formatted context string
     """
     if not documents:
-        return "No relevant documents found."
+        return NO_CONTEXT_ANSWER
     
     context_parts = []
     for i, doc in enumerate(documents, 1):
