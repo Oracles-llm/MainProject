@@ -112,8 +112,18 @@ function backendCommand(apiPort) {
     };
   }
 
+  // Detect virtual environment Python interpreter if available
+  const isWin = process.platform === "win32";
+  const venvPythonPath = isWin
+    ? path.join(projectRoot(), ".venv", "Scripts", "python.exe")
+    : path.join(projectRoot(), ".venv", "bin", "python");
+
+  const pythonCommand = fs.existsSync(venvPythonPath)
+    ? venvPythonPath
+    : (isWin ? "python" : "python3");
+
   return {
-    command: process.platform === "win32" ? "python" : "python3",
+    command: pythonCommand,
     args: ["main.py", "--host", "127.0.0.1", "--port", String(apiPort)],
     cwd: projectRoot(),
   };

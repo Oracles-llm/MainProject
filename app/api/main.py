@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.api.routes import router
+from app.api.documents import router as documents_router
 
 logger = get_logger(__name__)
 
@@ -119,6 +120,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(documents_router)
 
 
 @app.get("/")

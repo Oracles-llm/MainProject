@@ -19,7 +19,7 @@ from uuid import uuid4
 from app.core.config import settings
 from app.core.constants import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, DEFAULT_INGESTION_GLOB
 from app.core.logging import get_logger
-from app.db.qdrant_client import QdrantDB
+from app.db.qdrant_client import QdrantDB, get_qdrant_db
 from app.db.models import VectorPoint
 from app.embeddings.embedder import get_langchain_embeddings
 from app.ingestion.loaders import load_text_documents
@@ -106,68 +106,73 @@ class IngestionPipeline:
 		base_path = Path(folder_path).expanduser().resolve()
 		logger.info("Starting ingestion pipeline for folder: %s", base_path)
 
-		with QdrantDB() as qdrant:
-			# Reset or create the collection before loading documents so
-			# --recreate-collection also fixes stale schemas in empty folders.
-			self._ensure_collection(qdrant)
+		# Reuse the global singleton — local Qdrant (SQLite-backed) holds an
+		# exclusive file lock, so only one QdrantClient may be open on the same
+		# path at a time.  Creating a second QdrantDB() here would conflict with
+		# the client already held by VectorRetriever / RAGService.
+		qdrant = get_qdrant_db()
 
-			# 1. Load documents
-			docs = load_text_documents(str(base_path), glob=self.config.file_glob)
-			if not docs:
-				logger.warning("No documents found to ingest in %s", base_path)
-				return 0
+		# Reset or create the collection before loading documents so
+		# --recreate-collection also fixes stale schemas in empty folders.
+		self._ensure_collection(qdrant)
 
-			# 2. Chunk documents
-			chunks = chunk_documents(
-				documents=docs,
-				chunk_size=self.config.chunk_size,
-				chunk_overlap=self.config.chunk_overlap,
+		# 1. Load documents
+		docs = load_text_documents(str(base_path), glob=self.config.file_glob)
+		if not docs:
+			logger.warning("No documents found to ingest in %s", base_path)
+			return 0
+
+		# 2. Chunk documents
+		chunks = chunk_documents(
+			documents=docs,
+			chunk_size=self.config.chunk_size,
+			chunk_overlap=self.config.chunk_overlap,
+		)
+		if not chunks:
+			logger.warning("No chunks produced from documents in %s", base_path)
+			return 0
+
+		# 3. Generate dense and sparse vectors
+		logger.info("Generating dense embeddings for %d chunks using LangChain", len(chunks))
+		texts = [c.page_content for c in chunks]
+		dense_vectors = self.embeddings.embed_documents(texts)
+
+		if len(dense_vectors) != len(chunks):
+			raise ValueError(
+				f"Mismatch: {len(dense_vectors)} embeddings for {len(chunks)} chunks"
 			)
-			if not chunks:
-				logger.warning("No chunks produced from documents in %s", base_path)
-				return 0
 
-			# 3. Generate dense and sparse vectors
-			logger.info("Generating dense embeddings for %d chunks using LangChain", len(chunks))
-			texts = [c.page_content for c in chunks]
-			dense_vectors = self.embeddings.embed_documents(texts)
+		sparse_vectors = [None] * len(chunks)
+		if self._sparse_gen and self.config.enable_sparse_vectors:
+			logger.info("Generating sparse BM25 embeddings for %d chunks", len(chunks))
+			sparse_vectors = self._sparse_gen.embed_documents(texts)
 
-			if len(dense_vectors) != len(chunks):
+			if len(sparse_vectors) != len(chunks):
 				raise ValueError(
-					f"Mismatch: {len(dense_vectors)} embeddings for {len(chunks)} chunks"
+					f"Mismatch: {len(sparse_vectors)} sparse embeddings for {len(chunks)} chunks"
 				)
+		else:
+			logger.info("Skipping sparse BM25 embeddings; dense-only ingestion is active")
 
-			sparse_vectors = [None] * len(chunks)
-			if self._sparse_gen and self.config.enable_sparse_vectors:
-				logger.info("Generating sparse BM25 embeddings for %d chunks", len(chunks))
-				sparse_vectors = self._sparse_gen.embed_documents(texts)
+		# 4. Upsert points
+		logger.info(
+			"Upserting %d dense + sparse points into Qdrant collection '%s'",
+			len(chunks),
+			self.config.collection_name,
+		)
 
-				if len(sparse_vectors) != len(chunks):
-					raise ValueError(
-						f"Mismatch: {len(sparse_vectors)} sparse embeddings for {len(chunks)} chunks"
-					)
-			else:
-				logger.info("Skipping sparse BM25 embeddings; dense-only ingestion is active")
-
-			# 4. Upsert points
-			logger.info(
-				"Upserting %d dense + sparse points into Qdrant collection '%s'",
-				len(chunks),
-				self.config.collection_name,
+		points = []
+		for idx, (doc, dense, sparse) in enumerate(zip(chunks, dense_vectors, sparse_vectors)):
+			payload = self._build_payload(doc, chunk_index=idx)
+			point = VectorPoint(
+				id=str(uuid4()),
+				vector=dense,
+				payload=payload,
+				sparse_vectors={"bm25": sparse} if sparse else None,
 			)
+			points.append(point.to_point_struct())
 
-			points = []
-			for idx, (doc, dense, sparse) in enumerate(zip(chunks, dense_vectors, sparse_vectors)):
-				payload = self._build_payload(doc, chunk_index=idx)
-				point = VectorPoint(
-					id=str(uuid4()),
-					vector=dense,
-					payload=payload,
-					sparse_vectors={"bm25": sparse} if sparse else None,
-				)
-				points.append(point.to_point_struct())
-
-			qdrant.upsert_points(points, collection_name=self.config.collection_name)
+		qdrant.upsert_points(points, collection_name=self.config.collection_name)
 
 		logger.info("Ingestion pipeline completed successfully with %d chunks", len(chunks))
 		return len(chunks)
