@@ -43,6 +43,45 @@ RAG_STOP_SEQUENCES = [
 ]
 
 
+def _ensure_complete_sentence(text: str) -> str:
+    """Trim trailing incomplete sentence so the answer ends cleanly."""
+    if not text:
+        return text
+    # If the text already ends with sentence-ending punctuation, it's fine
+    if text.rstrip()[-1] in '.!?"':
+        return text.rstrip()
+    # Find the last sentence-ending punctuation
+    last_period = text.rfind('.')
+    last_excl = text.rfind('!')
+    last_ques = text.rfind('?')
+    last_end = max(last_period, last_excl, last_ques)
+    if last_end > 0:
+        return text[:last_end + 1].strip()
+    # No sentence-ending punctuation at all — return as-is with a period
+    return text.rstrip().rstrip(',;:') + '.'
+
+
+def _deduplicate_sentences(text: str) -> str:
+    """Remove duplicate sentences while preserving order.
+
+    SLMs often fall into repetition loops, producing the same sentence
+    two or three times.  This helper splits on sentence-ending punctuation,
+    keeps only the first occurrence of each sentence, and rejoins them.
+    """
+    if not text:
+        return text
+    # Split into sentences (keep the delimiter attached)
+    raw_sentences = re.split(r'(?<=[.!?])\s+', text)
+    seen: set = set()
+    unique: list = []
+    for sentence in raw_sentences:
+        normalised = sentence.strip().lower()
+        if normalised and normalised not in seen:
+            seen.add(normalised)
+            unique.append(sentence.strip())
+    return ' '.join(unique)
+
+
 def clean_rag_answer(answer: str) -> str:
     """Remove common local-model overgeneration after the first direct answer."""
     cleaned = answer.strip()
@@ -60,11 +99,18 @@ def clean_rag_answer(answer: str) -> str:
     if NO_CONTEXT_ANSWER in cleaned and cleaned != NO_CONTEXT_ANSWER:
         cleaned = cleaned.replace(NO_CONTEXT_ANSWER, "").strip()
 
+    # Join non-empty lines (allow multi-line answers from the model)
     lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
     if lines:
-        cleaned = lines[0]
+        cleaned = ' '.join(lines)
 
     cleaned = re.sub(r"^\s*\d+[\.\)]\s*", "", cleaned).strip()
+
+    # Remove duplicate sentences (SLM repetition loops)
+    cleaned = _deduplicate_sentences(cleaned)
+
+    # Ensure the answer ends on a complete sentence
+    cleaned = _ensure_complete_sentence(cleaned)
     return cleaned
 
 
@@ -176,6 +222,7 @@ class LLMClient:
                 temperature=self.temperature,
                 top_p=self.top_p,
                 max_tokens=self.max_tokens,
+                repeat_penalty=1.3,
                 verbose=self.verbose,
                 callback_manager=callback_manager
             )
@@ -284,7 +331,7 @@ class LLMClient:
                 stop=RAG_STOP_SEQUENCES,
                 temperature=0.1,
                 top_p=0.7,
-                max_tokens=96,
+                max_tokens=256,
             )
             return clean_rag_answer(response)
         else:
