@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import {
   CheckCircle2,
+  ChevronDown,
   FileText,
   Moon,
   Play,
@@ -13,6 +14,11 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -63,6 +69,7 @@ export function DocumentPreparationView({ theme, onToggleTheme }: Props) {
 
   const [rewriteEnabled, setRewriteEnabled] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   return (
@@ -224,76 +231,95 @@ export function DocumentPreparationView({ theme, onToggleTheme }: Props) {
           </div>
 
           <aside className="space-y-4">
-            <div className="rounded-lg border border-border bg-card p-4">
-              <div className="mb-4 flex items-center gap-2">
-                <Settings2 className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-sm font-semibold text-card-foreground">Processing settings</h2>
-              </div>
-              <div className="space-y-5">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <Label htmlFor="chunk-size">Chunk size</Label>
-                    <span className="text-xs text-muted-foreground">{chunkSize} tokens</span>
+            <Collapsible
+              open={settingsOpen}
+              onOpenChange={setSettingsOpen}
+              className="rounded-lg border border-border bg-card"
+            >
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-2 p-4 text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <Settings2 className="h-4 w-4 text-muted-foreground" />
+                    <h2 className="text-sm font-semibold text-card-foreground">Processing settings</h2>
                   </div>
-                  <Slider
-                    id="chunk-size"
-                    min={300}
-                    max={1600}
-                    step={50}
-                    value={[chunkSize]}
-                    onValueChange={([value]) => setChunkSize(value)}
-                    disabled={isProcessing}
+                  <ChevronDown
+                    className={cn(
+                      "h-4 w-4 text-muted-foreground transition-transform duration-200",
+                      settingsOpen && "rotate-180",
+                    )}
                   />
-                </div>
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="space-y-5 px-4 pb-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="chunk-size">Chunk size</Label>
+                      <span className="text-xs text-muted-foreground">{chunkSize} tokens</span>
+                    </div>
+                    <Slider
+                      id="chunk-size"
+                      min={300}
+                      max={1600}
+                      step={50}
+                      value={[chunkSize]}
+                      onValueChange={([value]) => setChunkSize(value)}
+                      disabled={isProcessing}
+                    />
+                  </div>
 
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <Label htmlFor="chunk-overlap">Overlap</Label>
-                    <span className="text-xs text-muted-foreground">{chunkOverlap} tokens</span>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="chunk-overlap">Overlap</Label>
+                      <span className="text-xs text-muted-foreground">{chunkOverlap} tokens</span>
+                    </div>
+                    <Slider
+                      id="chunk-overlap"
+                      min={0}
+                      max={300}
+                      step={20}
+                      value={[chunkOverlap]}
+                      onValueChange={([value]) => setChunkOverlap(value)}
+                      disabled={isProcessing}
+                    />
                   </div>
-                  <Slider
-                    id="chunk-overlap"
-                    min={0}
-                    max={300}
-                    step={20}
-                    value={[chunkOverlap]}
-                    onValueChange={([value]) => setChunkOverlap(value)}
-                    disabled={isProcessing}
-                  />
-                </div>
 
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <Label htmlFor="parallel-workers">Workers</Label>
-                    <span className="text-xs text-muted-foreground">{parallelWorkers}</span>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="parallel-workers">Workers</Label>
+                      <span className="text-xs text-muted-foreground">{parallelWorkers}</span>
+                    </div>
+                    <Slider
+                      id="parallel-workers"
+                      min={1}
+                      max={8}
+                      step={1}
+                      value={[parallelWorkers]}
+                      onValueChange={([value]) => setParallelWorkers(value)}
+                      disabled={isProcessing}
+                    />
                   </div>
-                  <Slider
-                    id="parallel-workers"
-                    min={1}
-                    max={8}
-                    step={1}
-                    value={[parallelWorkers]}
-                    onValueChange={([value]) => setParallelWorkers(value)}
-                    disabled={isProcessing}
-                  />
-                </div>
 
-                <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
-                  <div>
-                    <Label htmlFor="teacher-rewrite">Teacher rewrite</Label>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Improve chunks before saving them.
-                    </p>
+                  <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
+                    <div>
+                      <Label htmlFor="teacher-rewrite">Teacher rewrite</Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Improve chunks before saving them.
+                      </p>
+                    </div>
+                    <Switch
+                      id="teacher-rewrite"
+                      checked={rewriteEnabled}
+                      onCheckedChange={setRewriteEnabled}
+                      disabled={isProcessing}
+                    />
                   </div>
-                  <Switch
-                    id="teacher-rewrite"
-                    checked={rewriteEnabled}
-                    onCheckedChange={setRewriteEnabled}
-                    disabled={isProcessing}
-                  />
                 </div>
-              </div>
-            </div>
+              </CollapsibleContent>
+            </Collapsible>
 
             <div className="rounded-lg border border-border bg-card p-4">
               <h2 className="text-sm font-semibold text-card-foreground">Run summary</h2>
