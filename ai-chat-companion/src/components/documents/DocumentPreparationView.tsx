@@ -2,12 +2,15 @@ import { useRef, useState } from "react";
 import {
   CheckCircle2,
   ChevronDown,
+  Database,
   FileText,
+  Loader2,
   Moon,
   Play,
   RefreshCcw,
   Settings2,
   Sun,
+  Trash2,
   Upload,
   X,
   AlertCircle,
@@ -65,6 +68,10 @@ export function DocumentPreparationView({ theme, onToggleTheme }: Props) {
     setChunkSize,
     setChunkOverlap,
     setParallelWorkers,
+    ingestedDocuments,
+    ingestedLoading,
+    fetchIngestedDocuments,
+    removeIngestedDocument,
   } = useDoc();
 
   const [rewriteEnabled, setRewriteEnabled] = useState(false);
@@ -223,6 +230,74 @@ export function DocumentPreparationView({ theme, onToggleTheme }: Props) {
                         disabled={isProcessing}
                       >
                         <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-border bg-card">
+              <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <Database className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <h2 className="text-sm font-semibold text-card-foreground">Processed documents</h2>
+                    <p className="text-xs text-muted-foreground">
+                      Documents already ingested into the knowledge base.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={fetchIngestedDocuments}
+                  disabled={ingestedLoading}
+                  aria-label="Refresh ingested documents"
+                >
+                  <RefreshCcw className={cn("h-4 w-4", ingestedLoading && "animate-spin")} />
+                </Button>
+              </div>
+
+              {ingestedLoading && ingestedDocuments.length === 0 ? (
+                <div className="flex min-h-[120px] items-center justify-center px-4 text-center text-sm text-muted-foreground">
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Loading…
+                </div>
+              ) : ingestedDocuments.length === 0 ? (
+                <div className="flex min-h-[120px] items-center justify-center px-4 text-center text-sm text-muted-foreground">
+                  No documents in the knowledge base yet.
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {ingestedDocuments.map((doc) => (
+                    <div
+                      key={doc.source}
+                      className="flex items-center justify-between gap-3 px-4 py-3"
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
+                          <FileText className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-card-foreground">
+                            {doc.source}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {doc.chunks} chunk{doc.chunks !== 1 ? "s" : ""}
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-red-600 dark:hover:text-red-400"
+                        onClick={() => removeIngestedDocument(doc.source)}
+                        aria-label={`Remove ${doc.source} from knowledge base`}
+                        disabled={isProcessing}
+                      >
+                        <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   ))}

@@ -233,6 +233,65 @@ export function useDoc() {
     };
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // Ingested documents (already in Qdrant)
+  // ---------------------------------------------------------------------------
+
+  type IngestedDocument = {
+    source: string;
+    chunks: number;
+  };
+
+  const [ingestedDocuments, setIngestedDocuments] = useState<IngestedDocument[]>([]);
+  const [ingestedLoading, setIngestedLoading] = useState(false);
+
+  const fetchIngestedDocuments = useCallback(async () => {
+    setIngestedLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/documents/list`);
+      if (!response.ok) throw new Error(`Failed to fetch: ${response.statusText}`);
+      const data = await response.json();
+      setIngestedDocuments(data.documents ?? []);
+    } catch (err) {
+      console.error("Error fetching ingested documents:", err);
+    } finally {
+      setIngestedLoading(false);
+    }
+  }, []);
+
+  const removeIngestedDocument = useCallback(async (sourceName: string) => {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/v1/documents/remove/${encodeURIComponent(sourceName)}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Delete failed: ${response.statusText}`);
+      }
+      // Remove from local state immediately
+      setIngestedDocuments((current) => current.filter((d) => d.source !== sourceName));
+    } catch (err) {
+      console.error("Error removing ingested document:", err);
+      setError(`Failed to remove document: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  }, []);
+
+  // Fetch ingested documents on mount
+  useEffect(() => {
+    fetchIngestedDocuments();
+  }, [fetchIngestedDocuments]);
+
+  // Re-fetch after processing finishes
+  const prevIsProcessingRef = useRef(isProcessing);
+  useEffect(() => {
+    if (prevIsProcessingRef.current && !isProcessing) {
+      // Processing just finished — refresh the list
+      fetchIngestedDocuments();
+    }
+    prevIsProcessingRef.current = isProcessing;
+  }, [isProcessing, fetchIngestedDocuments]);
+
   return {
     // State
     documents,
@@ -258,5 +317,11 @@ export function useDoc() {
     setChunkSize,
     setChunkOverlap,
     setParallelWorkers,
+
+    // Ingested documents
+    ingestedDocuments,
+    ingestedLoading,
+    fetchIngestedDocuments,
+    removeIngestedDocument,
   };
 }

@@ -283,3 +283,139 @@ async def cleanup_job(job_id: str) -> JSONResponse:
         logger.info("Cleaned up temp dir for job %s: %s", job_id, tmp_dir)
 
     return JSONResponse(content={"detail": "Cleanup complete."})
+
+
+@router.get("/list")
+async def list_ingested_documents() -> JSONResponse:
+    """
+    List all documents that have been ingested into the Qdrant collection.
+
+    Scrolls through the collection and groups points by their ``source``
+    metadata field, returning a list of unique documents with chunk counts.
+
+    Response shape::
+
+        {
+            "documents": [
+                {"source": "notes.pdf", "chunks": 42},
+                {"source": "readme.md", "chunks": 7}
+            ]
+        }
+    """
+    try:
+        from app.db.qdrant_client import get_qdrant_db
+
+        qdrant = get_qdrant_db()
+        collection_name = qdrant.collection_name
+
+        if not qdrant.collection_exists(collection_name):
+            return JSONResponse(content={"documents": []})
+
+        # Scroll through all points, fetching only the ``source`` payload key
+        # to keep memory usage minimal.
+        source_chunks: Dict[str, int] = {}
+        offset = None
+
+        while True:
+            results, next_offset = qdrant.client.scroll(
+                collection_name=collection_name,
+                limit=256,
+                offset=offset,
+                with_payload=["source"],
+                with_vectors=False,
+            )
+
+            for point in results:
+                source = (point.payload or {}).get("source", "unknown")
+                # Normalise the source to just the filename for display.
+                source_name = Path(source).name if source else "unknown"
+                source_chunks[source_name] = source_chunks.get(source_name, 0) + 1
+
+            if next_offset is None:
+                break
+            offset = next_offset
+
+        documents = [
+            {"source": name, "chunks": count}
+            for name, count in sorted(source_chunks.items())
+        ]
+
+        return JSONResponse(content={"documents": documents})
+
+    except Exception as exc:
+        logger.error("Failed to list ingested documents: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list documents: {exc}")
+
+
+@router.delete("/remove/{source_name}")
+async def remove_ingested_document(source_name: str) -> JSONResponse:
+    """
+    Delete all chunks belonging to a specific document from Qdrant.
+
+    The ``source_name`` is matched against the filename portion of the
+    ``source`` payload field (case-sensitive).
+
+    Returns the number of points deleted.
+    """
+    try:
+        from app.db.qdrant_client import get_qdrant_db
+
+        qdrant = get_qdrant_db()
+        collection_name = qdrant.collection_name
+
+        if not qdrant.collection_exists(collection_name):
+            raise HTTPException(status_code=404, detail="Collection does not exist.")
+
+        # Collect all point IDs whose source filename matches.
+        point_ids: list[str] = []
+        offset = None
+
+        while True:
+            results, next_offset = qdrant.client.scroll(
+                collection_name=collection_name,
+                limit=256,
+                offset=offset,
+                with_payload=["source"],
+                with_vectors=False,
+            )
+
+            for point in results:
+                source = (point.payload or {}).get("source", "")
+                name = Path(source).name if source else ""
+                if name == source_name:
+                    point_ids.append(point.id)
+
+            if next_offset is None:
+                break
+            offset = next_offset
+
+        if not point_ids:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No chunks found for document '{source_name}'.",
+            )
+
+        qdrant.delete_points(point_ids, collection_name=collection_name)
+
+        logger.info(
+            "Deleted %d chunks for document '%s' from collection '%s'",
+            len(point_ids),
+            source_name,
+            collection_name,
+        )
+
+        return JSONResponse(
+            content={
+                "detail": f"Deleted {len(point_ids)} chunks for '{source_name}'.",
+                "deleted_chunks": len(point_ids),
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "Failed to remove document '%s': %s", source_name, exc, exc_info=True
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to remove document: {exc}")
+
