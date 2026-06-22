@@ -67,7 +67,8 @@ export function DocumentPreparationView({ theme, onToggleTheme }: Props) {
     setParallelWorkers,
   } = useDoc();
 
-  const [rewriteEnabled, setRewriteEnabled] = useState(true);
+  const [rewriteEnabled, setRewriteEnabled] = useState(false);
+  const [teacherEndpoint, setTeacherEndpoint] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -303,19 +304,37 @@ export function DocumentPreparationView({ theme, onToggleTheme }: Props) {
                     />
                   </div>
 
-                  <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
-                    <div>
-                      <Label htmlFor="teacher-rewrite">Teacher rewrite</Label>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Improve chunks before saving them.
-                      </p>
+                  <div className="rounded-md border border-border p-3 space-y-3">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <Label htmlFor="teacher-rewrite">Teacher rewrite</Label>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Improve chunks before saving them.
+                        </p>
+                      </div>
+                      <Switch
+                        id="teacher-rewrite"
+                        checked={rewriteEnabled}
+                        onCheckedChange={setRewriteEnabled}
+                        disabled={isProcessing}
+                      />
                     </div>
-                    <Switch
-                      id="teacher-rewrite"
-                      checked={rewriteEnabled}
-                      onCheckedChange={setRewriteEnabled}
-                      disabled={isProcessing}
-                    />
+                    {rewriteEnabled && (
+                      <div className="space-y-1.5">
+                        <Label htmlFor="teacher-endpoint" className="text-xs">
+                          Teacher model endpoint
+                        </Label>
+                        <Input
+                          id="teacher-endpoint"
+                          type="url"
+                          placeholder="https://api.example.com/v1/rewrite"
+                          value={teacherEndpoint}
+                          onChange={(e) => setTeacherEndpoint(e.target.value)}
+                          disabled={isProcessing}
+                          className="h-8 text-xs"
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
               </CollapsibleContent>
