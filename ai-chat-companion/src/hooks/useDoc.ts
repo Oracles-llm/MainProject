@@ -35,6 +35,7 @@ async function uploadDocuments(
   chunkSize: number,
   chunkOverlap: number,
   parallelWorkers: number,
+  chunkingMethod: string,
 ): Promise<string> {
   const formData = new FormData();
 
@@ -45,6 +46,7 @@ async function uploadDocuments(
   formData.append("chunk_size", chunkSize.toString());
   formData.append("chunk_overlap", chunkOverlap.toString());
   formData.append("parallel_workers", parallelWorkers.toString());
+  formData.append("chunking_method", chunkingMethod);
 
   const response = await fetch(`${API_BASE_URL}/api/v1/documents/prepare`, {
     method: "POST",
@@ -95,6 +97,8 @@ export function useDoc() {
   const [chunkSize, setChunkSize] = useState(900);
   const [chunkOverlap, setChunkOverlap] = useState(120);
   const [parallelWorkers, setParallelWorkers] = useState(4);
+  const [chunkingMethod, setChunkingMethod] = useState("recursive");
+  const [availableChunkingMethods, setAvailableChunkingMethods] = useState<string[]>(["recursive"]);
   const [jobId, setJobId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -187,7 +191,7 @@ export function useDoc() {
     try {
       const filesToUpload = documents.filter((doc) => doc.file).map((doc) => doc.file!);
 
-      const uploadedJobId = await uploadDocuments(filesToUpload, chunkSize, chunkOverlap, parallelWorkers);
+      const uploadedJobId = await uploadDocuments(filesToUpload, chunkSize, chunkOverlap, parallelWorkers, chunkingMethod);
       setJobId(uploadedJobId);
 
       // Update documents to show they're processing
@@ -211,7 +215,7 @@ export function useDoc() {
       setError(errorMessage);
       console.error("Error starting preparation:", err);
     }
-  }, [documents, chunkSize, chunkOverlap, parallelWorkers, pollJobStatus]);
+  }, [documents, chunkSize, chunkOverlap, parallelWorkers, chunkingMethod, pollJobStatus]);
 
   const cleanup = useCallback(async () => {
     if (!jobId) return;
@@ -277,9 +281,18 @@ export function useDoc() {
     }
   }, []);
 
-  // Fetch ingested documents on mount
+  // Fetch ingested documents and chunking methods on mount
   useEffect(() => {
     fetchIngestedDocuments();
+
+    // Fetch available chunking methods
+    fetch(`${API_BASE_URL}/api/v1/documents/chunking-methods`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.methods) setAvailableChunkingMethods(data.methods);
+        if (data.default) setChunkingMethod(data.default);
+      })
+      .catch((err) => console.error("Error fetching chunking methods:", err));
   }, [fetchIngestedDocuments]);
 
   // Re-fetch after processing finishes
@@ -317,6 +330,9 @@ export function useDoc() {
     setChunkSize,
     setChunkOverlap,
     setParallelWorkers,
+    chunkingMethod,
+    setChunkingMethod,
+    availableChunkingMethods,
 
     // Ingested documents
     ingestedDocuments,

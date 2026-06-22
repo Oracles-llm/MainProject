@@ -23,7 +23,7 @@ from app.db.qdrant_client import QdrantDB, get_qdrant_db
 from app.db.models import VectorPoint
 from app.embeddings.embedder import get_langchain_embeddings
 from app.ingestion.loaders import load_text_documents
-from app.ingestion.chunker import chunk_documents
+from app.ingestion.chunker import chunk_documents, DEFAULT_CHUNKING_METHOD, ChunkingMethod
 from app.retrieval import get_sparse_vector_generator
 
 try:
@@ -46,6 +46,7 @@ class IngestionConfig:
 	file_glob: str = DEFAULT_INGESTION_GLOB
 	chunk_size: int = DEFAULT_CHUNK_SIZE
 	chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
+	chunking_method: str = DEFAULT_CHUNKING_METHOD
 	enable_sparse_vectors: bool = True
 	recreate_collection: bool = False
 
@@ -127,6 +128,7 @@ class IngestionPipeline:
 			documents=docs,
 			chunk_size=self.config.chunk_size,
 			chunk_overlap=self.config.chunk_overlap,
+			method=self.config.chunking_method,
 		)
 		if not chunks:
 			logger.warning("No chunks produced from documents in %s", base_path)

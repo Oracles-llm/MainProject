@@ -25,6 +25,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -42,6 +49,15 @@ const statusLabel = {
   saved: "Saved",
   failed: "Failed",
 } as const;
+
+const chunkingMethodLabels: Record<string, string> = {
+  recursive: "Recursive Character",
+  character: "Character",
+  token: "Token",
+  markdown: "Markdown",
+  nltk: "NLTK Sentence",
+  spacy: "spaCy Sentence",
+};
 
 function formatSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -72,6 +88,9 @@ export function DocumentPreparationView({ theme, onToggleTheme }: Props) {
     ingestedLoading,
     fetchIngestedDocuments,
     removeIngestedDocument,
+    chunkingMethod,
+    setChunkingMethod,
+    availableChunkingMethods,
   } = useDoc();
 
   const [rewriteEnabled, setRewriteEnabled] = useState(false);
@@ -331,6 +350,26 @@ export function DocumentPreparationView({ theme, onToggleTheme }: Props) {
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <div className="space-y-5 px-4 pb-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="chunking-method">Chunking method</Label>
+                    <Select
+                      value={chunkingMethod}
+                      onValueChange={setChunkingMethod}
+                      disabled={isProcessing}
+                    >
+                      <SelectTrigger id="chunking-method" className="h-8 text-xs">
+                        <SelectValue placeholder="Select method" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableChunkingMethods.map((method) => (
+                          <SelectItem key={method} value={method} className="text-xs">
+                            {chunkingMethodLabels[method] ?? method}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
                   <div className="space-y-2">
                     <div className="flex items-center justify-between gap-3">
                       <Label htmlFor="chunk-size">Chunk size</Label>

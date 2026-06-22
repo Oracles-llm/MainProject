@@ -69,6 +69,7 @@ def _process_single_file(
     job_id: str,
     chunk_size: int,
     chunk_overlap: int,
+    chunking_method: str = "recursive",
 ) -> None:
     """Ingest one file and update the job record when done.
 
@@ -80,6 +81,7 @@ def _process_single_file(
         config = IngestionConfig(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            chunking_method=chunking_method,
             # Use glob that matches any file extension so txt/md/pdf all work.
             file_glob="**/*",
         )
@@ -111,6 +113,7 @@ def _process_job(
     file_entries: list[tuple[str, str]],
     chunk_size: int,
     chunk_overlap: int,
+    chunking_method: str = "recursive",
 ) -> None:
     """Process all files for a job sequentially, then mark the job done.
 
@@ -125,7 +128,7 @@ def _process_job(
                     logger.warning("Job %s was removed mid-run, aborting.", job_id)
                     return
 
-            _process_single_file(filename, file_tmp_dir, job_id, chunk_size, chunk_overlap)
+            _process_single_file(filename, file_tmp_dir, job_id, chunk_size, chunk_overlap, chunking_method)
 
         # Determine overall status
         with _jobs_lock:
@@ -154,12 +157,24 @@ def _process_job(
 # ---------------------------------------------------------------------------
 
 
+@router.get("/chunking-methods")
+async def get_chunking_methods() -> JSONResponse:
+    """Return the list of available chunking methods and the default."""
+    from app.ingestion.chunker import CHUNKING_METHODS, DEFAULT_CHUNKING_METHOD
+
+    return JSONResponse(content={
+        "methods": CHUNKING_METHODS,
+        "default": DEFAULT_CHUNKING_METHOD,
+    })
+
+
 @router.post("/prepare")
 async def prepare_documents(
     files: list[UploadFile] = File(...),
     chunk_size: int = Form(900),
     chunk_overlap: int = Form(120),
     parallel_workers: int = Form(4),  # accepted but not used (sequential for safety)
+    chunking_method: str = Form("recursive"),
 ) -> JSONResponse:
     """
     Accept one or more uploaded files, persist them to a temp directory,
@@ -215,11 +230,12 @@ async def prepare_documents(
         file_entries,
         chunk_size,
         chunk_overlap,
+        chunking_method,
     )
 
     logger.info(
-        "Job %s started: %d file(s), chunk_size=%d, chunk_overlap=%d",
-        job_id, len(files), chunk_size, chunk_overlap,
+        "Job %s started: %d file(s), chunk_size=%d, chunk_overlap=%d, method=%s",
+        job_id, len(files), chunk_size, chunk_overlap, chunking_method,
     )
     return JSONResponse(content={"job_id": job_id})
 
