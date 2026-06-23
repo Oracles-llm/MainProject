@@ -3,11 +3,13 @@ FastAPI routes for the RAG chat API.
 """
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from typing import TYPE_CHECKING
 from app.api.schemas import ChatRequest, ChatResponse
 from app.core.logging import get_logger
 from app.core.config import settings
 from app.llm import LLMClient
+from app.llm.prompts import build_chat_prompt_string
 
 logger = get_logger(__name__)
 
@@ -68,6 +70,39 @@ async def chat(request: ChatRequest) -> ChatResponse:
     
     except Exception as e:
         logger.error(f"Error processing chat request: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing request: {str(e)}"
+        )
+
+
+@router.post("/chat/stream")
+async def stream_chat(request: ChatRequest) -> StreamingResponse:
+    """
+    Stream chat responses token by token.
+
+    Keeps the existing /chat endpoint available for non-streaming clients while
+    allowing the UI to render model output as soon as tokens are produced.
+    """
+    try:
+        logger.info(f"Received streaming chat request: query='{request.query[:50]}...'")
+
+        if settings.DISABLE_RAG:
+            llm_client = get_llm_client()
+            prompt = build_chat_prompt_string(user_query=request.query)
+            token_stream = llm_client.stream(prompt)
+        else:
+            rag_service = get_rag_service()
+            token_stream = rag_service.stream(query=request.query)
+
+        return StreamingResponse(
+            token_stream,
+            media_type="text/plain; charset=utf-8",
+            headers={"Cache-Control": "no-cache"}
+        )
+
+    except Exception as e:
+        logger.error(f"Error starting streaming chat request: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Error processing request: {str(e)}"

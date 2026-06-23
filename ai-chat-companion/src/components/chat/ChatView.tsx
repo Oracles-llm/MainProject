@@ -16,10 +16,13 @@ type Props = {
 export function ChatView({ chat, onSend, isSending, theme, onToggleTheme }: Props) {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastMessage = chat?.messages.at(-1);
+  const showTyping =
+    isSending && (!lastMessage || lastMessage.role !== "assistant" || lastMessage.content.length === 0);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [chat?.messages.length, isSending]);
+  }, [chat?.messages.length, isSending, lastMessage?.content]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -58,7 +61,7 @@ export function ChatView({ chat, onSend, isSending, theme, onToggleTheme }: Prop
             {chat!.messages.map((m) => (
               <MessageBubble key={m.id} message={m} />
             ))}
-            {isSending && <TypingBubble />}
+            {showTyping && <TypingBubble />}
           </div>
         )}
       </div>

@@ -31,8 +31,11 @@ type PersistedChatState = {
   activeId: string | null;
 };
 
-async function fetchAssistantReply(query: string): Promise<string> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/chat`, {
+async function streamAssistantReply(
+  query: string,
+  onChunk: (content: string) => void,
+): Promise<string> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query }),
@@ -43,12 +46,36 @@ async function fetchAssistantReply(query: string): Promise<string> {
     throw new Error(detail || `Chat request failed with HTTP ${response.status}`);
   }
 
-  const payload = (await response.json()) as { response?: string };
-  if (!payload.response) {
+  if (!response.body) {
+    throw new Error("The backend did not return a streaming response.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let fullContent = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const chunk = decoder.decode(value, { stream: true });
+    if (!chunk) continue;
+
+    fullContent += chunk;
+    onChunk(fullContent);
+  }
+
+  const finalChunk = decoder.decode();
+  if (finalChunk) {
+    fullContent += finalChunk;
+    onChunk(fullContent);
+  }
+
+  if (!fullContent) {
     throw new Error("The backend returned an empty response.");
   }
 
-  return payload.response;
+  return fullContent;
 }
 
 function loadPersistedState(): PersistedChatState {
@@ -108,6 +135,7 @@ export function useChats() {
       if (!content.trim()) return;
       const text = content.trim();
       const targetId = activeId ?? uid();
+      const assistantMessageId = uid();
 
       setChats((prev) => {
         let list = prev;
@@ -121,7 +149,11 @@ export function useChats() {
           return {
             ...c,
             title: isFirst ? text.slice(0, 40) : c.title,
-            messages: [...c.messages, { id: uid(), role: "user", content: text }],
+            messages: [
+              ...c.messages,
+              { id: uid(), role: "user", content: text },
+              { id: assistantMessageId, role: "assistant", content: "" },
+            ],
           };
         });
       });
@@ -130,17 +162,20 @@ export function useChats() {
 
       setIsSending(true);
       try {
-        const reply = await fetchAssistantReply(text);
-        setChats((prev) =>
-          prev.map((c) =>
-            c.id === targetId
-              ? {
-                  ...c,
-                  messages: [...c.messages, { id: uid(), role: "assistant", content: reply }],
-                }
-              : c,
-          ),
-        );
+        await streamAssistantReply(text, (reply) => {
+          setChats((prev) =>
+            prev.map((c) =>
+              c.id === targetId
+                ? {
+                    ...c,
+                    messages: c.messages.map((message) =>
+                      message.id === assistantMessageId ? { ...message, content: reply } : message,
+                    ),
+                  }
+                : c,
+            ),
+          );
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unable to reach the backend.";
         setChats((prev) =>
@@ -148,14 +183,14 @@ export function useChats() {
             c.id === targetId
               ? {
                   ...c,
-                  messages: [
-                    ...c.messages,
-                    {
-                      id: uid(),
-                      role: "assistant",
-                      content: `I could not get a response from the local LLM.\n\n${message}`,
-                    },
-                  ],
+                  messages: c.messages.map((chatMessage) =>
+                    chatMessage.id === assistantMessageId
+                      ? {
+                          ...chatMessage,
+                          content: `I could not get a response from the local LLM.\n\n${message}`,
+                        }
+                      : chatMessage,
+                  ),
                 }
               : c,
           ),
