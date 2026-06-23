@@ -50,9 +50,18 @@ RAG_ARTIFACT_MARKERS = [
     "determine whether the given text",
     "return \"YES\"",
     "return \"NO\"",
+    "[Document",
     "Context documents:",
+    "SUPPORTED_CONTEXT_START",
+    "SUPPORTED_CONTEXT_END",
+    "USER_QUESTION_START",
+    "USER_QUESTION_END",
     "Question:",
     "Output:",
+    "The search results do not support",
+    "I have information about this topic based on Document",
+    "based on Document",
+    "Answer:",
 ]
 
 

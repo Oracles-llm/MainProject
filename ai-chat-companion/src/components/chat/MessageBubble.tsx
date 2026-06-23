@@ -6,6 +6,10 @@ export function MessageBubble({ message }: { message: Message }) {
   const isUser = message.role === "user";
   const thinkingSteps = !isUser ? (message.thinkingSteps ?? []) : [];
 
+  if (!isUser && !message.content && thinkingSteps.length === 0) {
+    return null;
+  }
+
   return (
     <div className={cn("flex w-full gap-4 py-5", isUser ? "justify-end" : "justify-start")}>
       {!isUser && (

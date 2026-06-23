@@ -21,6 +21,24 @@ from app.llm.prompts import NO_CONTEXT_ANSWER, build_rag_prompt_string, format_c
 logger = get_logger(__name__)
 
 
+STREAM_ARTIFACT_MARKERS = [
+    NO_CONTEXT_ANSWER,
+    "[Document",
+    "Context documents:",
+    "SUPPORTED_CONTEXT_START",
+    "SUPPORTED_CONTEXT_END",
+    "USER_QUESTION_START",
+    "USER_QUESTION_END",
+    "Question:",
+    "Output:",
+    "The search results do not support",
+    "I have information about this topic based on Document",
+    "based on Document",
+    "Answer:",
+    "```",
+]
+
+
 class RerankStrategy(str, Enum):
     """Reranking strategy options."""
     NONE = "none"
@@ -111,6 +129,9 @@ class RAGService:
     def _stream_prompt_tokens(self, prompt: str, stop: Optional[List[str]] = None):
         """Stream final answer tokens from the LLM with RAG-safe defaults."""
         emitted = False
+        pending = ""
+        keep_tail_chars = max(len(marker) for marker in STREAM_ARTIFACT_MARKERS) + 32
+
         for token in self.llm_client.stream(
             prompt,
             stop=stop,
@@ -120,8 +141,38 @@ class RAGService:
         ):
             if not token:
                 continue
-            emitted = True
-            yield token
+
+            pending += token
+            lower_pending = pending.lower()
+            marker_positions = [
+                lower_pending.find(marker.lower())
+                for marker in STREAM_ARTIFACT_MARKERS
+                if lower_pending.find(marker.lower()) >= 0
+            ]
+
+            if marker_positions:
+                marker_index = min(marker_positions)
+                safe_prefix = pending[:marker_index]
+                if safe_prefix:
+                    emitted = True
+                    yield safe_prefix
+                elif not emitted and lower_pending.lstrip().startswith(NO_CONTEXT_ANSWER.lower()):
+                    emitted = True
+                    yield NO_CONTEXT_ANSWER
+                return
+
+            if len(pending) > keep_tail_chars:
+                safe_prefix = pending[:-keep_tail_chars]
+                pending = pending[-keep_tail_chars:]
+                if safe_prefix:
+                    emitted = True
+                    yield safe_prefix
+
+        if pending:
+            cleaned_pending = clean_rag_answer(pending)
+            if cleaned_pending:
+                emitted = True
+                yield cleaned_pending
 
         if not emitted:
             yield NO_CONTEXT_ANSWER
@@ -156,6 +207,63 @@ class RAGService:
 
         return False
 
+    @classmethod
+    def _deterministic_support_extract(cls, query: str, text: str) -> Optional[str]:
+        """Keep obvious factual definition chunks when the LLM verifier is over-strict."""
+        if cls._looks_like_prompt_artifact(text):
+            return None
+
+        topic_terms = cls._query_topic_terms(query)
+        if not topic_terms:
+            return None
+
+        normalized = " ".join(text.lower().split())
+        if not any(term in normalized for term in topic_terms):
+            return None
+
+        factual_markers = (
+            " is ",
+            " are ",
+            " provides ",
+            " allows ",
+            " enables ",
+            " ensures ",
+            " used to ",
+            " refers to ",
+            " means ",
+            " definition",
+            " pattern",
+            " object",
+            " class",
+        )
+        if not any(marker in f" {normalized} " for marker in factual_markers):
+            return None
+
+        cleaned = re.sub(r"[*_`#>-]+", " ", text)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if not cleaned:
+            return None
+
+        parts = [
+            part.strip(" -:\t")
+            for part in re.split(r"(?<=[.!?])\s+|\s+---+\s+", cleaned)
+            if part.strip(" -:\t")
+        ]
+
+        selected: List[str] = []
+        for part in parts:
+            lower_part = part.lower()
+            if any(term in lower_part for term in topic_terms):
+                selected.append(part)
+            if len(selected) >= 3:
+                break
+
+        if not selected and parts:
+            selected = parts[:2]
+
+        extract = " ".join(selected).strip()
+        return extract[:700] if extract else None
+
     @staticmethod
     def _should_use_explanatory_recovery(query: str) -> bool:
         """Allow a general-knowledge recovery pass for broad conceptual questions."""
@@ -177,11 +285,17 @@ class RAGService:
         """Extract distinctive query terms for a light topical relevance check."""
         generic_terms = {
             "about",
+            "class",
+            "classes",
             "define",
             "describe",
             "design",
             "does",
             "explain",
+            "instance",
+            "instances",
+            "object",
+            "objects",
             "pattern",
             "please",
             "tell",
@@ -216,6 +330,90 @@ class RAGService:
                         return True
 
         return False
+
+    @staticmethod
+    def _distinctive_terms(text: str) -> List[str]:
+        """Extract non-generic terms for grounding checks."""
+        generic_terms = {
+            "about",
+            "allows",
+            "answer",
+            "class",
+            "classes",
+            "concept",
+            "context",
+            "created",
+            "creates",
+            "creating",
+            "define",
+            "design",
+            "does",
+            "exact",
+            "explain",
+            "instance",
+            "instances",
+            "object",
+            "objects",
+            "pattern",
+            "provides",
+            "question",
+            "related",
+            "specific",
+            "subject",
+            "support",
+            "supports",
+            "what",
+        }
+        terms = re.findall(r"[a-zA-Z][a-zA-Z0-9_-]+", text.lower())
+        return [
+            term
+            for term in terms
+            if len(term) >= 5 and term not in generic_terms
+        ]
+
+    @classmethod
+    def _term_supported_by_text(cls, term: str, text: str, text_tokens: set[str]) -> bool:
+        """Check exact or close typo-tolerant term support in source text."""
+        if term in text:
+            return True
+
+        if len(term) < 6:
+            return False
+
+        for token in text_tokens:
+            if abs(len(token) - len(term)) > 2:
+                continue
+            if SequenceMatcher(None, term, token).ratio() >= 0.88:
+                return True
+
+        return False
+
+    @classmethod
+    def _is_extraction_grounded(cls, query: str, document_text: str, extracted: str) -> bool:
+        """Reject verifier outputs that introduce unsupported subject terms."""
+        if not extracted or cls._looks_like_prompt_artifact(extracted):
+            return False
+
+        normalized_doc = " ".join(document_text.lower().split())
+        doc_tokens = set(re.findall(r"[a-zA-Z][a-zA-Z0-9_-]+", normalized_doc))
+
+        topic_terms = cls._query_topic_terms(query)
+        if topic_terms and not any(
+            cls._term_supported_by_text(term, normalized_doc, doc_tokens)
+            for term in topic_terms
+        ):
+            return False
+
+        extracted_terms = cls._distinctive_terms(extracted)
+        if not extracted_terms:
+            return False
+
+        supported_terms = [
+            term
+            for term in extracted_terms
+            if cls._term_supported_by_text(term, normalized_doc, doc_tokens)
+        ]
+        return len(supported_terms) / len(extracted_terms) >= 0.72
 
     def _can_use_explanatory_recovery(self, query: str, documents: List[SearchResult]) -> bool:
         """Only recover broad conceptual answers when retrieved docs match the topic."""
@@ -292,6 +490,7 @@ Corrected search query:"""
 
     def _evaluate_document_support(self, query: str, document: SearchResult, index: int) -> Optional[str]:
         """Return extracted supporting evidence from one document, or None if unsupported."""
+        topic_terms = ", ".join(self._query_topic_terms(query)) or "none"
         prompt = f"""System: You are a strict evidence filter for retrieval augmented answering.
 Your task is to decide whether the document contains information that directly helps answer the question.
 
@@ -303,6 +502,11 @@ Rules:
 5) Minor spelling mistakes in the question may still refer to the same concept, for example "singelton" can match "singleton".
 6) Do not answer the question. Do not add outside knowledge. Do not explain your decision.
 7) Keep supported extracts concise and faithful to the document text.
+8) The document must explicitly mention the requested subject or a clear spelling variant of it. Related topics are UNSUPPORTED.
+9) Every extracted noun or technical term must be present in the document text. Do not infer missing terms.
+
+Requested subject terms:
+{topic_terms}
 
 Question:
 {query}
@@ -323,13 +527,16 @@ Output:"""
         extracted = re.sub(r"^\s*(supported|answer|output)\s*:\s*", "", extracted, flags=re.I).strip()
 
         if not extracted or extracted.upper().startswith("UNSUPPORTED"):
-            return None
+            return self._deterministic_support_extract(query, document.text)
 
         if "UNSUPPORTED" in extracted.upper() and len(extracted.split()) <= 8:
-            return None
+            return self._deterministic_support_extract(query, document.text)
 
         if self._looks_like_prompt_artifact(extracted):
-            return None
+            return self._deterministic_support_extract(query, document.text)
+
+        if not self._is_extraction_grounded(query, document.text, extracted):
+            return self._deterministic_support_extract(query, document.text)
 
         return extracted
 
@@ -513,31 +720,29 @@ Assistant:"""
                 except Exception as e:
                     logger.warning(f"Reranking failed, using original results: {e}")
             
-            context_docs = [doc.text for doc in used_docs]
-            
+            extracted_docs, extracted_facts = self._extract_supported_context(query, used_docs)
+            if not extracted_facts:
+                return RAGResponse(
+                    answer=NO_CONTEXT_ANSWER,
+                    query=query,
+                    retrieved_documents=retrieved_docs,
+                    reranked_documents=reranked_docs,
+                    used_documents=[],
+                    metadata={
+                        "retrieval_count": len(retrieved_docs),
+                        "used_count": 0,
+                        "reranked": use_reranking,
+                        "rerank_strategy": rerank_strategy.value if use_reranking else None
+                    }
+                )
+
+            used_docs = extracted_docs
             answer = self.llm_client.rag(
                 query=query,
-                context_documents=context_docs,
+                context_documents=extracted_facts,
                 chat_history=chat_history,
                 system_prompt=system_prompt
             )
-
-            if answer == NO_CONTEXT_ANSWER:
-                extracted_docs, extracted_facts = self._extract_supported_context(query, used_docs)
-                if extracted_facts:
-                    used_docs = extracted_docs
-                    answer = self.llm_client.rag(
-                        query=query,
-                        context_documents=extracted_facts,
-                        chat_history=chat_history,
-                        system_prompt=system_prompt
-                    )
-                elif self._can_use_explanatory_recovery(query, used_docs):
-                    answer = self._recover_explanatory_answer(
-                        query=query,
-                        documents=used_docs,
-                        chat_history=chat_history
-                    )
             
             logger.debug(f"Generated answer with length: {len(answer)}")
             
@@ -622,16 +827,8 @@ Assistant:"""
             used_docs, extracted_facts = self._extract_supported_context(query, retrieved_docs)
 
             if not extracted_facts:
-                answer = NO_CONTEXT_ANSWER
-                if self._can_use_explanatory_recovery(query, retrieved_docs):
-                    answer = self._recover_explanatory_answer(
-                        query=query,
-                        documents=retrieved_docs,
-                        chat_history=chat_history
-                    )
-
                 return RAGResponse(
-                    answer=answer,
+                    answer=NO_CONTEXT_ANSWER,
                     query=query,
                     retrieved_documents=retrieved_docs,
                     used_documents=[],
@@ -697,14 +894,7 @@ Assistant:"""
         used_docs, extracted_facts = self._extract_supported_context(query, retrieved_docs)
 
         if not extracted_facts:
-            if self._can_use_explanatory_recovery(query, retrieved_docs):
-                prompt = self._build_explanatory_recovery_prompt(
-                    query=query,
-                    documents=retrieved_docs
-                )
-                yield from self._stream_prompt_tokens(prompt, stop=RAG_STOP_SEQUENCES)
-            else:
-                yield NO_CONTEXT_ANSWER
+            yield NO_CONTEXT_ANSWER
             return
 
         context_str = format_context_documents(extracted_facts)
@@ -753,15 +943,7 @@ Assistant:"""
         )
 
         if not extracted_facts:
-            if self._can_use_explanatory_recovery(query, retrieved_docs):
-                yield self._stream_event("step", message="Generating grounded answer")
-                prompt = self._build_explanatory_recovery_prompt(
-                    query=query,
-                    documents=retrieved_docs
-                )
-                yield from self._stream_prompt_token_events(prompt, stop=RAG_STOP_SEQUENCES)
-            else:
-                yield self._stream_event("token", content=NO_CONTEXT_ANSWER)
+            yield self._stream_event("token", content=NO_CONTEXT_ANSWER)
             yield self._stream_event("done")
             return
 
@@ -845,9 +1027,12 @@ Assistant:"""
                 except Exception as e:
                     logger.warning(f"Reranking failed, using original results: {e}")
             
-            context_docs = [doc.text for doc in used_docs]
-            
-            context_str = format_context_documents(context_docs)
+            extracted_docs, extracted_facts = self._extract_supported_context(query, used_docs)
+            if not extracted_facts:
+                yield NO_CONTEXT_ANSWER
+                return
+
+            context_str = format_context_documents(extracted_facts)
             prompt = build_rag_prompt_string(
                 user_query=query,
                 context=context_str,
