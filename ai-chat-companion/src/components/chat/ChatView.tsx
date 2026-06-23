@@ -1,13 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Paperclip, Moon, Sun } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronDown, Moon, Paperclip, Sparkles, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { MessageBubble, TypingBubble } from "./MessageBubble";
 import { EmptyState } from "./EmptyState";
-import type { Chat } from "@/hooks/useChats";
+import type { Chat, ChatMode } from "@/hooks/useChats";
 
 type Props = {
   chat: Chat | null;
-  onSend: (text: string) => Promise<void>;
+  onSend: (text: string, mode?: ChatMode) => Promise<void>;
   isSending: boolean;
   theme: "light" | "dark";
   onToggleTheme: () => void;
@@ -15,21 +21,27 @@ type Props = {
 
 export function ChatView({ chat, onSend, isSending, theme, onToggleTheme }: Props) {
   const [input, setInput] = useState("");
+  const [mode, setMode] = useState<ChatMode>("normal");
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastMessage = chat?.messages.at(-1);
   const showTyping =
-    isSending && (!lastMessage || lastMessage.role !== "assistant" || lastMessage.content.length === 0);
+    isSending &&
+    (!lastMessage ||
+      lastMessage.role !== "assistant" ||
+      (lastMessage.content.length === 0 && !lastMessage.thinkingSteps?.length));
+  const modeLabel = mode === "thinking" ? "Thinking" : "Normal";
+  const ModeIcon = mode === "thinking" ? Brain : Sparkles;
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [chat?.messages.length, isSending, lastMessage?.content]);
+  }, [chat?.messages.length, isSending, lastMessage?.content, lastMessage?.thinkingSteps?.length]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!input.trim() || isSending) return;
     const text = input;
     setInput("");
-    await onSend(text);
+    await onSend(text, mode);
   };
 
   const isEmpty = !chat || chat.messages.length === 0;
@@ -55,7 +67,7 @@ export function ChatView({ chat, onSend, isSending, theme, onToggleTheme }: Prop
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {isEmpty ? (
-          <EmptyState onPick={(t) => onSend(t)} />
+          <EmptyState onPick={(text) => onSend(text, mode)} />
         ) : (
           <div className="mx-auto max-w-3xl px-4 py-6">
             {chat!.messages.map((m) => (
@@ -90,6 +102,42 @@ export function ChatView({ chat, onSend, isSending, theme, onToggleTheme }: Prop
               rows={1}
               className="max-h-40 flex-1 resize-none border-0 bg-transparent px-1 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
             />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  disabled={isSending}
+                  className="mb-1 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+                  aria-label="Select answer mode"
+                >
+                  <ModeIcon className="h-4 w-4" />
+                  <span className="hidden sm:inline">{modeLabel}</span>
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" side="top" className="w-44 rounded-xl p-1.5">
+                <DropdownMenuItem
+                  onClick={() => setMode("normal")}
+                  className="h-9 cursor-pointer justify-between rounded-lg"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Sparkles className="h-4 w-4" />
+                    Normal
+                  </span>
+                  {mode === "normal" && <Check className="h-4 w-4" />}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setMode("thinking")}
+                  className="h-9 cursor-pointer justify-between rounded-lg"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Brain className="h-4 w-4" />
+                    Thinking
+                  </span>
+                  {mode === "thinking" && <Check className="h-4 w-4" />}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               type="submit"
               size="icon"

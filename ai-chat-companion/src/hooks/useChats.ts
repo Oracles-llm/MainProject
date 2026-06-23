@@ -4,7 +4,10 @@ export type Message = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  thinkingSteps?: string[];
 };
+
+export type ChatMode = "normal" | "thinking";
 
 export type Chat = {
   id: string;
@@ -31,14 +34,22 @@ type PersistedChatState = {
   activeId: string | null;
 };
 
+type StreamEvent =
+  | { type: "token"; content?: string }
+  | { type: "step"; message?: string }
+  | { type: "done" }
+  | { type: "error"; message?: string };
+
 async function streamAssistantReply(
   query: string,
-  onChunk: (content: string) => void,
+  mode: ChatMode,
+  onTokenContent: (content: string) => void,
+  onStep: (message: string) => void,
 ): Promise<string> {
   const response = await fetch(`${API_BASE_URL}/api/v1/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, mode }),
   });
 
   if (!response.ok) {
@@ -53,6 +64,43 @@ async function streamAssistantReply(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let fullContent = "";
+  let pending = "";
+
+  const handleEvent = (event: StreamEvent) => {
+    if (event.type === "token") {
+      const content = event.content ?? "";
+      if (!content) return;
+      fullContent += content;
+      onTokenContent(fullContent);
+      return;
+    }
+
+    if (event.type === "step") {
+      const message = event.message?.trim();
+      if (message) onStep(message);
+      return;
+    }
+
+    if (event.type === "error") {
+      throw new Error(event.message || "The backend reported a streaming error.");
+    }
+  };
+
+  const handleLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    try {
+      handleEvent(JSON.parse(trimmed) as StreamEvent);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        fullContent += line;
+        onTokenContent(fullContent);
+        return;
+      }
+      throw error;
+    }
+  };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -61,14 +109,19 @@ async function streamAssistantReply(
     const chunk = decoder.decode(value, { stream: true });
     if (!chunk) continue;
 
-    fullContent += chunk;
-    onChunk(fullContent);
+    pending += chunk;
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    lines.forEach(handleLine);
   }
 
   const finalChunk = decoder.decode();
   if (finalChunk) {
-    fullContent += finalChunk;
-    onChunk(fullContent);
+    pending += finalChunk;
+  }
+
+  if (pending.trim()) {
+    handleLine(pending);
   }
 
   if (!fullContent) {
@@ -131,7 +184,7 @@ export function useChats() {
   }, []);
 
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, mode: ChatMode = "normal") => {
       if (!content.trim()) return;
       const text = content.trim();
       const targetId = activeId ?? uid();
@@ -152,7 +205,12 @@ export function useChats() {
             messages: [
               ...c.messages,
               { id: uid(), role: "user", content: text },
-              { id: assistantMessageId, role: "assistant", content: "" },
+              {
+                id: assistantMessageId,
+                role: "assistant",
+                content: "",
+                thinkingSteps: mode === "thinking" ? [] : undefined,
+              },
             ],
           };
         });
@@ -162,20 +220,43 @@ export function useChats() {
 
       setIsSending(true);
       try {
-        await streamAssistantReply(text, (reply) => {
-          setChats((prev) =>
-            prev.map((c) =>
-              c.id === targetId
-                ? {
-                    ...c,
-                    messages: c.messages.map((message) =>
-                      message.id === assistantMessageId ? { ...message, content: reply } : message,
-                    ),
-                  }
-                : c,
-            ),
-          );
-        });
+        await streamAssistantReply(
+          text,
+          mode,
+          (reply) => {
+            setChats((prev) =>
+              prev.map((c) =>
+                c.id === targetId
+                  ? {
+                      ...c,
+                      messages: c.messages.map((message) =>
+                        message.id === assistantMessageId
+                          ? { ...message, content: reply }
+                          : message,
+                      ),
+                    }
+                  : c,
+              ),
+            );
+          },
+          (step) => {
+            setChats((prev) =>
+              prev.map((c) =>
+                c.id === targetId
+                  ? {
+                      ...c,
+                      messages: c.messages.map((message) => {
+                        if (message.id !== assistantMessageId) return message;
+                        const thinkingSteps = message.thinkingSteps ?? [];
+                        if (thinkingSteps.includes(step)) return message;
+                        return { ...message, thinkingSteps: [...thinkingSteps, step] };
+                      }),
+                    }
+                  : c,
+              ),
+            );
+          },
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unable to reach the backend.";
         setChats((prev) =>

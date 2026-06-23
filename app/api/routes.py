@@ -5,6 +5,7 @@ FastAPI routes for the RAG chat API.
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from typing import TYPE_CHECKING
+import json
 from app.api.schemas import ChatRequest, ChatResponse
 from app.core.logging import get_logger
 from app.core.config import settings
@@ -17,6 +18,19 @@ router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 if TYPE_CHECKING:
     from app.services.rag_service import RAGService
+
+
+def stream_event(event_type: str, **payload) -> str:
+    """Serialize one streaming response event as an NDJSON line."""
+    return json.dumps({"type": event_type, **payload}, ensure_ascii=False) + "\n"
+
+
+def token_events(token_stream):
+    """Wrap a plain token iterator in the UI streaming event protocol."""
+    for token in token_stream:
+        if token:
+            yield stream_event("token", content=token)
+    yield stream_event("done")
 
 
 def get_rag_service() -> "RAGService":
@@ -57,7 +71,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         ChatResponse with generated response
     """
     try:
-        logger.info(f"Received chat request: query='{request.query[:50]}...'")
+        logger.info(f"Received chat request: mode='{request.mode}', query='{request.query[:50]}...'")
 
         if settings.DISABLE_RAG:
             llm_client = get_llm_client()
@@ -65,7 +79,10 @@ async def chat(request: ChatRequest) -> ChatResponse:
             return ChatResponse(response=response)
 
         rag_service = get_rag_service()
-        response = rag_service.query(query=request.query)
+        if request.mode == "thinking":
+            response = rag_service.thinking_query(query=request.query)
+        else:
+            response = rag_service.query(query=request.query)
         return ChatResponse(response=response.answer)
     
     except Exception as e:
@@ -85,19 +102,24 @@ async def stream_chat(request: ChatRequest) -> StreamingResponse:
     allowing the UI to render model output as soon as tokens are produced.
     """
     try:
-        logger.info(f"Received streaming chat request: query='{request.query[:50]}...'")
+        logger.info(
+            f"Received streaming chat request: mode='{request.mode}', query='{request.query[:50]}...'"
+        )
 
         if settings.DISABLE_RAG:
             llm_client = get_llm_client()
             prompt = build_chat_prompt_string(user_query=request.query)
-            token_stream = llm_client.stream(prompt)
+            token_stream = token_events(llm_client.stream(prompt))
         else:
             rag_service = get_rag_service()
-            token_stream = rag_service.stream(query=request.query)
+            if request.mode == "thinking":
+                token_stream = rag_service.thinking_stream_events(query=request.query)
+            else:
+                token_stream = token_events(rag_service.stream(query=request.query))
 
         return StreamingResponse(
             token_stream,
-            media_type="text/plain; charset=utf-8",
+            media_type="application/x-ndjson; charset=utf-8",
             headers={"Cache-Control": "no-cache"}
         )
 

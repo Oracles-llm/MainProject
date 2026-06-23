@@ -1,9 +1,11 @@
-import { Sparkles, User } from "lucide-react";
+import { Brain, CheckCircle2, Sparkles, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Message } from "@/hooks/useChats";
 
 export function MessageBubble({ message }: { message: Message }) {
   const isUser = message.role === "user";
+  const thinkingSteps = !isUser ? (message.thinkingSteps ?? []) : [];
+
   return (
     <div className={cn("flex w-full gap-4 py-5", isUser ? "justify-end" : "justify-start")}>
       {!isUser && (
@@ -19,6 +21,22 @@ export function MessageBubble({ message }: { message: Message }) {
             : "bg-muted/40 text-foreground rounded-bl-sm",
         )}
       >
+        {thinkingSteps.length > 0 && (
+          <div className={cn("space-y-1.5", message.content && "mb-3 border-b border-border pb-3")}>
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <Brain className="h-3.5 w-3.5" />
+              Thinking
+            </div>
+            <div className="space-y-1">
+              {thinkingSteps.map((step) => (
+                <div key={step} className="flex items-start gap-2 text-xs text-muted-foreground">
+                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {message.content}
       </div>
       {isUser && (

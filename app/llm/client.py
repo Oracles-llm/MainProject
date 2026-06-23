@@ -42,6 +42,19 @@ RAG_STOP_SEQUENCES = [
     "System:",
 ]
 
+RAG_ARTIFACT_MARKERS = [
+    "```",
+    "Answer concisely",
+    "concisely in two",
+    "Please determine whether",
+    "determine whether the given text",
+    "return \"YES\"",
+    "return \"NO\"",
+    "Context documents:",
+    "Question:",
+    "Output:",
+]
+
 
 def _ensure_complete_sentence(text: str) -> str:
     """Trim trailing incomplete sentence so the answer ends cleanly."""
@@ -88,13 +101,30 @@ def clean_rag_answer(answer: str) -> str:
     if not cleaned:
         return cleaned
 
-    if cleaned == NO_CONTEXT_ANSWER:
-        return cleaned
+    no_context_normalized = re.sub(r"[^a-z0-9]+", " ", cleaned.lower()).strip()
+    if no_context_normalized in {
+        "i dont have information to give answer",
+        "i dont have information to give an answer",
+        "i dont have information to give you an answer",
+        "i don t have information to give answer",
+        "i don t have information to give an answer",
+        "i don t have information to give you an answer",
+    }:
+        return NO_CONTEXT_ANSWER
 
     for marker in RAG_STOP_SEQUENCES:
         marker_index = cleaned.find(marker.strip())
         if marker_index > 0:
             cleaned = cleaned[:marker_index].strip()
+
+    lower_cleaned = cleaned.lower()
+    for marker in RAG_ARTIFACT_MARKERS:
+        marker_index = lower_cleaned.find(marker.lower())
+        if marker_index == 0:
+            return NO_CONTEXT_ANSWER
+        if marker_index > 0:
+            cleaned = cleaned[:marker_index].strip()
+            lower_cleaned = cleaned.lower()
 
     if NO_CONTEXT_ANSWER in cleaned and cleaned != NO_CONTEXT_ANSWER:
         cleaned = cleaned.replace(NO_CONTEXT_ANSWER, "").strip()
